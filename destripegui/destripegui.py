@@ -9,6 +9,7 @@ import shutil
 from win32event import CreateMutex
 from win32api import GetLastError
 from winerror import ERROR_ALREADY_EXISTS
+from tqdm import tqdm
 from sys import exit
 #import torch
 import subprocess
@@ -33,10 +34,10 @@ def get_configs(config_path):
     return configs
 
 def check_for_bad_images(path):
-    print('Checking for corrupt files...')
+    print('\nChecking for corrupt files...')
     count = 0
     start = datetime.now()
-    for filename in os.listdir(path):
+    for filename in tqdm(os.listdir(path)):
         # print('img path: {}'.format(os.path.join(path, filename)))
         try:
             img = Image.open(os.path.join(path, filename))
@@ -47,7 +48,7 @@ def check_for_bad_images(path):
             print("Bad file: {}".format(filename))
             count += 1
     time = datetime.now() - start
-    print("{} corrupt files found.  Total time: {} seconds".format(count, time.seconds))
+    print("{} corrupt files found.".format(count, time.seconds))
     return count
     
 
