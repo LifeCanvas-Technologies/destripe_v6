@@ -1,0 +1,3 @@
+global-include *.ico
+global-include *.ini
+global-include *.exe
