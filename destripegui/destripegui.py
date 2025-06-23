@@ -162,30 +162,11 @@ def get_acquisition_dirs():
     for dir in ac_dirs:
         # print(dir['path'])
         # print(dir['metadata'])
-        destripe_string = dir['metadata']['sample metadata']['destripe']
-        try:
-            tag = ''
-            for s in ['N', 'C', 'D', 'A']:
-                if s in destripe_string:
-                    tag = s
-                    break
-            if tag == 'N':
-                configs['no_list'].append(dir['path'])
-                continue
-            elif tag == 'C':
-                configs['no_list'].append(dir['path'])
-                continue
-            elif tag == 'D':
-                configs['no_list'].append(dir['path'])
-                continue
-            elif tag == 'A':
-                configs['no_list'].append(dir['path'])
-                continue
-            else: 
-                unfinished_dirs.append(dir)
-        except:
-            print('Error encountered while checking metadata tags for {}:'.format(dir['path']))
-            pass
+        destripe_status = dir['metadata']['sample metadata']['destripe_status']
+        if destripe_status == 'true':
+            unfinished_dirs.append(dir)
+        else:
+            configs['no_list'].append(dir['path'])
     
     if len(unfinished_dirs) > 0: unfinished_dirs.sort(key=lambda x: x['path'])
     return unfinished_dirs
@@ -263,8 +244,8 @@ def finish_directory(dir):
             output_file = os.path.join(Path(dir['output_path']), file_name)
             shutil.copyfile(file, output_file)
 
-    prepend_tag(dir, 'in', 'D')
-    prepend_tag(dir, 'out', 'D')
+    change_status(dir, 'in', 'done')
+    change_status(dir, 'out', 'done')
     # x = input('about to rename...')
     append_folder_name(dir, 'in', configs['input_done'])
     append_folder_name(dir, 'out', configs['output_done'])
@@ -294,7 +275,7 @@ def append_folder_name(dir, drive, msg, attempts = 0):
             x = input('Make sure it is accessible and not open in another program, then press Enter to retry...\n')
         append_folder_name(dir, drive, msg)
 
-def prepend_tag(dir, drive, msg):
+def change_status(dir, drive, msg):
     # prepend tag to metadata file
 
     if drive == 'in':
@@ -304,32 +285,27 @@ def prepend_tag(dir, drive, msg):
     try:
         with open(metadata_path, 'r') as f:
             metadata = json.load(f)
-
-        destripe = metadata['sample metadata']['destripe']
-        for char in 'ACDNacdn':
-            destripe = destripe.replace(char, '')
-        destripe = msg + destripe
-        metadata['sample metadata']['destripe'] = destripe
+        metadata['sample metadata']['destripe_status'] = msg
 
         with open(metadata_path, 'w') as f:
             json.dump(metadata, f, indent=2)
 
     except:
-        print('Cannot access {} to change destripe tag'.format(metadata_path))
+        print('Cannot access {} to change destripe status'.format(metadata_path))
         x = input('Make sure it is accessible and not open in another program, then press Enter to retry...\n')
-        prepend_tag(dir, drive, msg)
+        change_status(dir, drive, msg)
 
 def abort(dir):
     # Perform tasks needed to respond to aborted acquisition
     
     print("\nAborting {}...\n".format(dir['path']))
 
-    prepend_tag(dir, 'in', 'A')
+    change_status(dir, 'in', 'aborted')
     append_folder_name(dir, 'in', configs['input_abort'])
 
     if os.path.exists(dir['output_path']):
         if os.path.exists(os.path.join(dir['output_path'], 'metadata.json')):
-            prepend_tag(dir, 'out', 'A')
+            change_status(dir, 'out', 'aborted')
         append_folder_name(dir, 'out', configs['output_abort'])
             
 def time_stamp_start(current_dir):
