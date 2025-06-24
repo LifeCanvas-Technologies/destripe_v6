@@ -117,6 +117,89 @@ def get_metadata(dir):
         metadata = json.load(f)
         dir['metadata'] = metadata
 
+def pair_key_value_lists(keys, values):
+    # utility function for building metadata dict
+
+    d = {}
+    for i in range(0, len(keys)):
+        key = keys[i]
+        val = values[i]
+        if key != '':
+            d[key] = val
+    return d
+
+def get_target_number(z_block, z_step):
+    # Calculates number of images per tile
+    try:
+        steps_per_tile = max(math.ceil(z_block / z_step) - 1, 1)
+    except:
+        steps_per_tile = 1
+    return steps_per_tile
+
+def parse_destripe_tag(tag):
+    status = 'true'
+    for i in 'NCDA':
+        if i in tag:
+            status = 'false'
+            tag = tag.replace(i, '')
+    return status, tag
+
+def get_metadata_v5(dir):
+    # builds metadata dict
+    metadata_path = os.path.join(dir['path'], 'metadata.txt')
+
+    metadata_dict = {
+        'channels': [],
+        'tiles': []
+    }
+    sections = {
+        'channel_vals': [],
+        'tile_vals': []
+    }
+    with open(metadata_path, encoding="utf8", errors="ignore") as f:
+        reader = csv.reader(f, dialect='excel', delimiter='\t')
+        section_num = 0
+        for row in reader:
+            if section_num == 0:
+                sections['gen_keys'] = row
+                section_num += 1
+                continue
+            if section_num == 1:
+                sections['gen_vals'] = row
+                section_num += 1
+                continue
+            if section_num == 2:
+                sections['channel_keys'] = row
+                section_num += 1
+                continue
+            if section_num == 3:
+                if row[0] != 'X':
+                    sections['channel_vals'].append(row)
+                    continue
+                else:
+                    sections['tile_keys'] = row
+                    section_num += 2
+                    continue
+            if section_num == 5:
+                sections['tile_vals'].append(row)
+
+    d = pair_key_value_lists(sections['gen_keys'], sections['gen_vals'])
+    target_number = get_target_number(d['Z_Block'], d['Z Step (m)'])
+    d['destripe status'], d['destripe'] = parse_destripe_tag(d['Destripe'])
+    metadata_dict.update({'sample metadata': d})
+
+    for channel in sections['channel_vals']:
+        d = pair_key_value_lists(sections['channel_keys'], channel)
+        metadata_dict['channels'].append(d)
+
+    for tile in sections['tile_vals']:
+        d = pair_key_value_lists(sections['tile_keys'], tile)
+        d['numImages'] = 1
+        if int(d['Skip']) == 1: d['numImages'] = target_number
+        metadata_dict['tiles'].append(d)
+
+    dir['metadata'] = metadata_dict
+
 def search_directory(search_dir, ac_list, depth):
     # Recursive search function through input_dir to find directories with metadata.json.  Ignores no_list
 
@@ -128,24 +211,22 @@ def search_directory(search_dir, ac_list, depth):
         x = input('Press Enter to retry...')
         search_loop()
 
-    if 'metadata.json' in contents:
+    is_acquisition = True
+    if 'metadata.txt' or 'metadata.txt' not in contents: is_acquisition = False
+    if 'sequence.json' in contents and configs['version'] != '6': is_acquisition = False
+
+    if is_acquisition:
         ac_list.append({
             'path': search_dir, 
             'output_path': os.path.join(configs['output_dir'], os.path.relpath(search_dir, configs['input_dir']))
         })
         # log("Adding {} to provisional Acquisition Queue".format(search_dir), False)
         return ac_list
+
     if depth == 0: return ac_list
     for item in contents:
         item_path = os.path.join(search_dir, item)
         if os.path.isdir(item_path) and item_path not in configs['no_list']:
-            # try:
-            #     ac_list = search_directory(configs['input_dir'], output_dir, item_path, ac_list, depth-1)
-            # except: 
-            #     log("Error encountered trying to add {} to New Acquisitions List:".format(item_path), True)
-            #     log(traceback.format_exc(), True)
-            #     log("Continuing on anyway...", True)
-            #     pass
             ac_list = search_directory(item_path, ac_list, depth-1)
     return ac_list
         
@@ -157,7 +238,10 @@ def get_acquisition_dirs():
     ac_dirs = search_directory(search_dir, list(), depth=3)
             
     for dir in ac_dirs:
-        get_metadata(dir)
+        if configs['version'] == '6':
+            get_metadata(dir)
+        else:
+            get_metadata_v5(dir)
    
     unfinished_dirs = []    
     for dir in ac_dirs:
@@ -180,7 +264,11 @@ def count_tiles(dir):
         filter = tile['Filter']
         x = tile['X']
         y = tile['Y']
-        tile_path = os.path.join('Ex_{}_Em_{}'.format(laser, filter), x, '{}_{}'.format(x, y))
+        if configs['version'] == '6':
+            tile_path = os.path.join('Ex_{}_Em_{}'.format(laser, filter), x, '{}_{}'.format(x, y))
+        else:
+            tile_path = os.path.join('Ex_{}_Ch{}'.format(laser, filter), x, '{}_{}'.format(x, y))
+
         input_images = len(os.listdir(os.path.join(dir['path'], tile_path)))
         try:
             output_images = len(os.listdir(os.path.join(dir['output_path'], tile_path)))
@@ -241,12 +329,16 @@ def finish_directory(dir):
     for file in Path(dir['path']).iterdir():
         file_name = os.path.split(file)[1]
         if Path(file).suffix in ['.txt', '.ini', '.json']:
-            # log('    Copying {} to {}'.format(file_name, dir['output_path']), True)
             output_file = os.path.join(Path(dir['output_path']), file_name)
             shutil.copyfile(file, output_file)
 
-    change_status(dir, 'in', 'done')
-    change_status(dir, 'out', 'done')
+    if configs['version'] == '6':
+        change_status(dir, 'in', 'done')
+        change_status(dir, 'out', 'done')
+    else:
+        prepend_tag(dir, 'in', 'D')
+        prepend_tag(dir, 'out', 'D')
+
     # x = input('about to rename...')
     append_folder_name(dir, 'in', configs['input_done'])
     append_folder_name(dir, 'out', configs['output_done'])
@@ -276,6 +368,34 @@ def append_folder_name(dir, drive, msg, attempts = 0):
             x = input('Make sure it is accessible and not open in another program, then press Enter to retry...\n')
         append_folder_name(dir, drive, msg)
 
+def prepend_tag(dir, drive, msg):
+    # prepend tag to metadata file
+    
+    if drive == 'in':
+        metadata_path = os.path.join(dir['path'], 'metadata.txt')
+    else:
+        metadata_path = os.path.join(dir['output_path'], 'metadata.txt')
+    try:
+        with open(metadata_path, errors="ignore") as f:
+            reader = csv.reader(f, dialect='excel', delimiter='\t')
+            line_list = list(reader)
+            
+        destripe_position = line_list[0].index('Destripe')
+        destripe = line_list[1][destripe_position]
+        for char in 'ACDNacdn':
+            destripe = destripe.replace(char, '')
+
+        line_list[1][destripe_position] = msg + destripe
+        # os.remove(metadata_path)
+        with open(metadata_path, 'w', newline='') as f:
+            writer = csv.writer(f, dialect='excel', delimiter='\t')
+            for row in line_list:
+                writer.writerow(row)
+    except:
+        print('Cannot access {} to change destripe tag'.format(metadata_path))
+        x = input('Make sure it is accessible and not open in another program, then press Enter to retry...\n')
+        prepend_tag(dir, drive, msg)
+
 def change_status(dir, drive, msg):
     # prepend tag to metadata file
 
@@ -301,12 +421,18 @@ def abort(dir):
     
     print("\nAborting {}...\n".format(dir['path']))
 
-    change_status(dir, 'in', 'aborted')
+    if configs['version'] == '6':
+        change_status(dir, 'in', 'aborted')
+    else:
+        prepend_tag(dir, 'in', 'A')
     append_folder_name(dir, 'in', configs['input_abort'])
 
     if os.path.exists(dir['output_path']):
         if os.path.exists(os.path.join(dir['output_path'], 'metadata.json')):
-            change_status(dir, 'out', 'aborted')
+            if configs['version'] == '6':
+                change_status(dir, 'out', 'aborted')
+            else:
+                prepend_tag(dir, 'out', 'A')
         append_folder_name(dir, 'out', configs['output_abort'])
             
 def time_stamp_start(current_dir):
@@ -335,13 +461,23 @@ def time_stamp_finish(current_dir):
     timer_text = "\nDestriper Finish Time: {}".format(finish_time.strftime("%m/%d/%Y, %H:%M:%S"))
     timer_text += "\nDestriper Elapsed Time: {:02}:{:02}:{:02}".format(hours, minutes, seconds)
 
-    acq_file = os.path.join(current_dir['path'], 'acquisition log.txt')
-    with open(acq_file, 'r') as f:
-        lines = f.readlines()
-    line = lines[5]
-    acq_start = datetime.strptime(line[:line.index("\t")], "%Y-%m-%dT%H:%M:%S")
-    line = lines[-1]
-    acq_finish = datetime.strptime(line[:line.index("\t")], "%Y-%m-%dT%H:%M:%S")
+    if configs['version'] == '6':
+        acq_file = os.path.join(current_dir['path'], 'acquisition log.txt')
+        with open(acq_file, 'r') as f:
+            lines = f.readlines()
+        line = lines[5]
+        acq_start = datetime.strptime(line[:line.index("\t")], "%Y-%m-%dT%H:%M:%S")
+        line = lines[-1]
+        acq_finish = datetime.strptime(line[:line.index("\t")], "%Y-%m-%dT%H:%M:%S")
+    else:
+        acq_file = os.path.join(current_dir['path'], 'ASI_logging.txt')
+        with open(acq_file, 'r') as f:
+            lines = f.readlines()
+        line = lines[0]
+        acq_start = datetime.strptime(line[:line.index('M')+1], "%m/%d/%Y %I:%M:%S %p")
+        line = lines[-1]
+        acq_finish = datetime.strptime(line[:line.index('M')+1], "%m/%d/%Y %I:%M:%S %p")
+
     elapsed_time = acq_finish - acq_start
     s = elapsed_time.seconds
     hours = math.floor(s/3600)
