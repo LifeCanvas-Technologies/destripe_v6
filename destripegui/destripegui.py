@@ -131,7 +131,7 @@ def pair_key_value_lists(keys, values):
 def get_target_number(z_block, z_step):
     # Calculates number of images per tile
     try:
-        steps_per_tile = max(math.ceil(z_block / z_step) - 1, 1)
+        steps_per_tile = max(math.ceil(float(z_block) / float(z_step)) - 1, 1)
     except:
         steps_per_tile = 1
     return steps_per_tile
@@ -184,8 +184,8 @@ def get_metadata_v5(dir):
                 sections['tile_vals'].append(row)
 
     d = pair_key_value_lists(sections['gen_keys'], sections['gen_vals'])
-    target_number = get_target_number(d['Z_Block'], d['Z Step (m)'])
-    d['destripe status'], d['destripe'] = parse_destripe_tag(d['Destripe'])
+    target_number = get_target_number(d['Z_Block'], d['Z step (m)'])
+    d['destripe_status'], d['destripe'] = parse_destripe_tag(d['Destripe'])
     metadata_dict.update({'sample metadata': d})
 
     for channel in sections['channel_vals']:
@@ -194,8 +194,9 @@ def get_metadata_v5(dir):
 
     for tile in sections['tile_vals']:
         d = pair_key_value_lists(sections['tile_keys'], tile)
-        d['numImages'] = 1
-        if int(d['Skip']) == 1: d['numImages'] = target_number
+        d['NumImages'] = 1
+        if int(d['Skip']) == 1:
+            d['NumImages'] = target_number
         metadata_dict['tiles'].append(d)
 
     dir['metadata'] = metadata_dict
@@ -212,8 +213,9 @@ def search_directory(search_dir, ac_list, depth):
         search_loop()
 
     is_acquisition = True
-    if 'metadata.txt' or 'metadata.txt' not in contents: is_acquisition = False
+    if 'metadata.txt' not in contents: is_acquisition = False
     if 'sequence.json' in contents and configs['version'] != '6': is_acquisition = False
+    if 'sequence.json' not in contents and configs['version'] == '6': is_acquisition = False
 
     if is_acquisition:
         ac_list.append({
@@ -245,8 +247,6 @@ def get_acquisition_dirs():
    
     unfinished_dirs = []    
     for dir in ac_dirs:
-        # print(dir['path'])
-        # print(dir['metadata'])
         destripe_status = dir['metadata']['sample metadata']['destripe_status']
         if destripe_status == 'true':
             unfinished_dirs.append(dir)
@@ -264,8 +264,10 @@ def count_tiles(dir):
         filter = tile['Filter']
         x = tile['X']
         y = tile['Y']
+        
         if configs['version'] == '6':
-            tile_path = os.path.join('Ex_{}_Em_{}'.format(laser, filter), x, '{}_{}'.format(x, y))
+            ch = tile['FilterChannel']
+            tile_path = os.path.join('Ex_{}_Em_{}_Ch{}'.format(laser, filter, ch), x, '{}_{}'.format(x, y))
         else:
             tile_path = os.path.join('Ex_{}_Ch{}'.format(laser, filter), x, '{}_{}'.format(x, y))
 
@@ -412,7 +414,7 @@ def change_status(dir, drive, msg):
             json.dump(metadata, f, indent=2)
 
     except:
-        print('Cannot access {} to change destripe status'.format(metadata_path))
+        print('Cannot access {} to change destripe_status'.format(metadata_path))
         x = input('Make sure it is accessible and not open in another program, then press Enter to retry...\n')
         change_status(dir, drive, msg)
 
