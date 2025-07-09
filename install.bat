@@ -1,7 +1,9 @@
+cd /D "%~dp0"
 call conda env remove -n cl_destripe_6
 call conda env remove -p C:\ProgramData\Anaconda3\envs\cl_destripe_6
 
 call conda env create -p C:\ProgramData\Anaconda3\envs\cl_destripe_6 -f environment.yml
+icacls C:\ProgramData\Anaconda3\envs\cl_destripe_6 /grant Everyone:(RX) /T
 
 call conda activate cl_destripe_6
 
