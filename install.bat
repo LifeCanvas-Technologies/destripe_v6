@@ -1,6 +1,7 @@
 call conda env remove -n cl_destripe_6
+call conda env remove -p C:\ProgramData\Anaconda3\envs\cl_destripe_6
 
-call conda env create -f environment.yml
+call conda env create -p C:\ProgramData\Anaconda3\envs\cl_destripe_6 -f environment.yml
 
 call conda activate cl_destripe_6
 
@@ -14,7 +15,7 @@ call pip install -e .
 set SCRIPT="%TEMP%\%RANDOM%-%RANDOM%-%RANDOM%-%RANDOM%.vbs"
 
 echo Set WshShell = CreateObject("Wscript.shell") >> %SCRIPT%
-echo Set oLink = WshShell.CreateShortcut("%USERPROFILE%\Desktop\Destripe v6.lnk") >> %SCRIPT%
+echo Set oLink = WshShell.CreateShortcut("C:\Users\Public\Desktop\Destripe v6.lnk") >> %SCRIPT%
 echo oLink.TargetPath = "%~dp0destripegui\data\Command_Line_Destripe.bat" >> %SCRIPT%
 echo oLink.IconLocation = "%~dp0destripegui\data\lct.ico" >> %SCRIPT%
 echo oLink.Save >> %SCRIPT%
