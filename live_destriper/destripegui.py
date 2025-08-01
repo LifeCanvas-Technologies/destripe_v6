@@ -148,15 +148,7 @@ def get_target_number(z_block, z_step):
         steps_per_tile = 1
     return steps_per_tile
 
-def parse_destripe_tag(tag):
-    status = 'true'
-    for i in 'NCDA':
-        if i in tag:
-            status = 'false'
-            tag = tag.replace(i, '')
-    return status, tag
-
-def get_metadata_v5(input_path):
+def get_metadata_v5(input_path, is_megaspim = False):
     # builds metadata dict
     metadata_path = input_path / 'metadata.txt'
 
@@ -196,8 +188,10 @@ def get_metadata_v5(input_path):
                 sections['tile_vals'].append(row)
 
     d = pair_key_value_lists(sections['gen_keys'], sections['gen_vals'])
-    target_number = get_target_number(d['Z_Block'], d['Z step (m)'])
-    d['destripe_status'], d['destripe'] = parse_destripe_tag(d['Destripe'])
+    if not is_megaspim:
+        target_number = get_target_number(d['Z_Block'], d['Z step (m)'])
+    else:
+        target_number = d["Images_Strip"] # Number of images per strip
     metadata_dict.update({'sample metadata': d})
 
     for channel in sections['channel_vals']:
@@ -212,23 +206,21 @@ def get_metadata_v5(input_path):
         metadata_dict['tiles'].append(d)
     return metadata_dict
 
-def get_megaspim_metadata(input_path):
-    metadata_path = input_path / "metadata.json" #
-    # TODO: Fill this out
-    pass
-
 def count_tiles(input_path, output_path, metadata, metadata_version):
     tiles = []
     for tile in metadata['tiles']:
         expected = int(tile['NumImages'])
-        laser = tile['Laser']
-        filter = tile['Filter']
+        laser = tile.get('Laser')
+        filter = tile.get('Filter') # megaspim doesn't have this
         x = tile['X']
         y = tile['Y']
-        
+        z = tile["Z"]
+
+
         if metadata_version==0:
-            print("MegaSPIM")
-            pass 
+            # Have to get the wavelength from the list of wavelengths (which corresponds to the "laser" parameter)
+            wavelength = metadata["channels"][int(laser)]["Wavelength"]
+            tile_path = os.path.join('Ex_{}_Em_{}'.format(wavelength, laser), x, '{}_{}'.format(x, y), "%06d"%int(z))
         elif metadata_version==6:
             ch = tile['FilterChannel']
             tile_path = os.path.join('Ex_{}_Em_{}_Ch{}'.format(laser, filter, ch), x, '{}_{}'.format(x, y))
@@ -319,7 +311,7 @@ def finish_directory(input_path, output_path):
             output_file = os.path.join(Path(output_path), file_name)
             shutil.copyfile(file, output_file)
 
-def create_destripe_list_txt(input_dir, destripe_list_path, tiles, metadata_version):
+def create_destripe_list_txt(input_dir, destripe_list_path, tiles, include_MIPs = False):
     """
     Based on the metadata, we create the list of folders that need to be destriped still. 
     """
@@ -329,7 +321,7 @@ def create_destripe_list_txt(input_dir, destripe_list_path, tiles, metadata_vers
             full_path = input_dir / relative_path
             f.write(str(full_path) + "\n")
 
-            if metadata_version != 0:
+            if include_MIPs:
                 # That means it's SmartSPIM, which means we have MIPs
                 channel_mip_name = relative_path.split("/")[0] + "_MIP"
                 item = f'{channel_mip_name}/{"/".join(relative_path.split("/")[1:])}'
@@ -382,18 +374,22 @@ def main():
     if spim_type != "SmartSPIM":
         metadata_version = 0
         # Then it is Dali or MegaSPIM
-        metadata = get_megaspim_metadata(raw_dir) # TODO: write this functino for reading megaspim_metadata
+        metadata = get_metadata_v5(raw_dir, is_megaspim = True)
     elif args.metadata_version==6:
         metadata = get_metadata(raw_dir)
     else:
-        metadata = get_metadata_v5(raw_dir)
+        metadata = get_metadata_v5(raw_dir, is_megaspim = False)
 
     # we also want to write to a destripe_folder_list.txt to keep track of the un-destriped stacks in case this fails. Then, the normal destriping can
     # take care of this
     destripe_list_path = destriped_dir / "destripe_folder_list.txt"
     if not destripe_list_path.exists():
         tiles = count_tiles(raw_dir, destriped_dir, metadata, metadata_version)
-        create_destripe_list_txt(raw_dir, destripe_list_path, tiles, metadata_version)
+        if spim_type == "SmartSPIM":
+            include_MIPs = True
+        else:
+            include_MIPs = False
+        create_destripe_list_txt(raw_dir, destripe_list_path, tiles, include_MIPs = include_MIPs)
 
     
     # Make params dictionary
