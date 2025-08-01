@@ -16,10 +16,13 @@ import shutil
 from typing import Optional
 warnings.filterwarnings("ignore")
 
-supported_extensions = ['.tif', '.tiff', '.raw', '.dcimg', '.png']
+from live_destriper.logger import get_logger, get_default_logger
+
+supported_extensions = ['.tif', '.tiff', '.raw', '.png']
 supported_output_extensions = ['.tif', '.tiff', '.png']
 nb_retry = 10
 
+logger = None
 
 def _get_extension(path):
     """Extract the file extension from the provided path
@@ -515,16 +518,10 @@ def read_filter_save(output_root_dir, input_path, output_path, sigma, level=0, w
     n = 3
     for i in range(n):
         try:
-            if z_idx is None:
-                # Path must be TIFF or RAW
-                img = imread(str(input_path))
-                dtype = img.dtype
-                if not dont_convert_16bit:
-                    dtype = np.uint16
-            else:
-                # Path must be to DCIMG file
-                assert str(input_path).endswith('.dcimg')
-                img = imread_dcimg(str(input_path), z_idx)
+            # Path must be TIFF or RAW
+            img = imread(str(input_path))
+            dtype = img.dtype
+            if not dont_convert_16bit:
                 dtype = np.uint16
         except:
             if i == n -1:
@@ -565,16 +562,6 @@ def _read_filter_save(input_dict):
         input dictionary with arguments for `read_filter_save`.
 
     """
-    # input_path = input_dict['input_path']
-    # output_path = input_dict['output_path']
-    # sigma = input_dict['sigma']
-    # level = input_dict['level']
-    # wavelet = input_dict['wavelet']
-    # crossover = input_dict['crossover']
-    # threshold = input_dict['threshold']
-    # compression = input_dict['compression']
-    # flat = input_dict['flat']
-    # read_filter_save(input_path, output_path, sigma, level, wavelet, crossover, threshold, compression, flat)
     read_filter_save(**input_dict)
 
 
@@ -605,15 +592,7 @@ def _find_all_images(search_path, input_path, output_path, zstep=None):
     for p in search_path.iterdir():
         if p.is_file():
             if p.suffix in supported_extensions:
-                if p.suffix == '.dcimg':
-                    if zstep is None:
-                        raise ValueError('Unknown zstep for DCIMG slice positions')
-                    shape = check_dcimg_shape(str(p))
-                    start = check_dcimg_start(str(p))
-                    substack = [(p, i, start + i * zstep) for i in range(shape[0])]
-                    img_paths += substack
-                else:
-                    img_paths.append(p)
+                img_paths.append(p)
         elif p.is_dir():
             rel_path = p.relative_to(input_path)
             o = output_path.joinpath(rel_path)
@@ -682,21 +661,6 @@ def batch_filter(input_path, output_path, workers, chunks, sigma, level=0, wavel
     print('Looking for images in {}...'.format(input_path))
     img_paths = _find_all_images(input_path, input_path, output_path, zstep)
     print('Found {} compatible images'.format(len(img_paths)))
-    # if auto_mode:
-        # count_path = os.path.join(input_path, 'image_count.txt')
-        # print('count_path: {} count: {}'.format(count_path, len(img_paths)))
-        # with open(count_path, 'w') as fp:
-            # fp.write(str(len(img_paths)))
-            # fp.close
-            
-    # if auto_mode:
-    #     img_path_strs = list(str(path) for path in img_paths)
-    #     # list_path = os.path.join(output_path, 'destriped_image_list.txt')
-    #     # print('writing image_list.  {} images'.format(len(img_path_strs)))
-    #     with open(list_path, 'w') as fp:
-    #         fp.write('\n'.join(img_path_strs) + '\n')
-    #         fp.close
-        # print('writing image list: {}'.format(list_path))
             
     # copy text and ini files
     for file in input_path.iterdir():
@@ -743,17 +707,18 @@ def batch_filter(input_path, output_path, workers, chunks, sigma, level=0, wavel
     with multiprocessing.Pool(workers) as pool:
         list(tqdm.tqdm(pool.imap(_read_filter_save, args, chunksize=chunks), total=len(args), ascii=True))
     
-    print('Done!')
 
+     # Interpolate images that could not be opened
     if os.path.exists(error_path):
+        logger.info("Some images could not be opened, beginning interpolation...")
         with open(error_path, 'r') as fp:
-            first_line = fp.readline()
             images = fp.readlines()
             for image_path in images:
                 interpolate(image_path, input_path, output_path)
             x = len(images)
-            print('{} images could not be opened and were interpolated.  See destripe log for more details'.format(x))
+            logger.info('{} images could not be opened and were interpolated.  See destripe log for more details'.format(x))
             fp.close()
+        os.remove(error_path) # get rid of the error_path once we're done interpolate the images.
 
 
 def normalize_flat(flat):
@@ -839,6 +804,13 @@ def main(raw_args=None):
     args = _parse_args(raw_args)
     sigma = [args.sigma1, args.sigma2]
     input_path = Path(args.input)
+
+    global logger
+
+    if args.log_path is not None:
+        logger = get_logger(args.log_path)
+    else:
+        logger = get_default_logger()
 
     flat = None
     if args.flat is not None:

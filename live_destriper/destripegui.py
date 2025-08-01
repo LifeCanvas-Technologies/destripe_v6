@@ -1,6 +1,5 @@
 import os, time, csv, json
 import math
-import configparser
 from pathlib import Path
 from datetime import datetime
 import shutil
@@ -12,11 +11,8 @@ import argparse
 import psutil
 import glob
 
-
-from destripegui.destripe.utils import find_all_images
-from destripegui.destripe import supported_extensions
-
-DESTRIPE_TIME_STAMP_PATH = 'logs/destriping_time_stamps.txt'
+from live_destriper.utils import get_spim_type, get_txt_encoding
+from live_destriper.logger import get_logger
 
 def parse_args(raw_args=None):
     """
@@ -30,7 +26,6 @@ def parse_args(raw_args=None):
     parser.add_argument("--num-workers", help="Number of parallel processes to use for all aspects of destriping (particularly I/O) (Default: Number of physical cores)", type=int, default=psutil.cpu_count(logical=False))
     parser.add_argument("--ram-loadsize", help="Number of images to load at once on RAM GPU (Default: None, infer from available RAM)", type=int, default=None)
     parser.add_argument("--gpu-chunksize", help="Number of images to destripe at once in the GPU (Default: None, infer from available vRAM)", type=int, default=None)
-    parser.add_argument("--is-smartspim", action="store_true", default=False, help="Whether it's smartspim or megaspim postprocessing, which affects metadata reading.")
     parser.add_argument('--log-path',type=str,required=False, default=None, help="path to the logs for postprocessing")
     parser.add_argument("--use-gpu", action="store_true", help="Whether to use GPU or not when destriping")
 
@@ -68,16 +63,18 @@ def run_pystripe(input_path,
                  gpu_chunksize = None, 
                  ram_loadsize = None, 
                  num_workers = psutil.cpu_count(logical=False),
+                 rotate_and_flip = False,
+                 extra_rotate_and_flip = False,
                  log_path = None,
                  check_corrupt = False):
     if use_gpu:
         print("Using GPU Destriper")
-        from destripegui.destripe.core_gpu import main as gpu_destripe
+        from live_destriper.destripe.core_gpu import main as gpu_destripe
         cmd = ["-i", str(input_path),
                         "-o", str(output_path), 
                         "--sigma1", str(sigma1),
                         "--sigma2", str(sigma2),
-                        "--cpu-readers", str(num_workers)]
+                        "--workers", str(num_workers)]
         if ram_loadsize is not None:
             cmd.append("--ram-loadsize")
             cmd.append(str(ram_loadsize))
@@ -87,13 +84,17 @@ def run_pystripe(input_path,
         if log_path is not None:
             cmd.append("--log-path")
             cmd.append(str(log_path))
+        if rotate_and_flip:
+            cmd.append("--rotate-and-flip")
+        if extra_rotate_and_flip:
+            cmd.append("--extra-rotate-and-flip")
         print(cmd)
         
         gpu_destripe(cmd)        
 
     else:
         print("Using CPU Destriper")
-        from destripegui.destripe.core import main as cpu_destripe
+        from live_destriper.destripe.core import main as cpu_destripe
         cpu_destripe(["-i", str(input_path),
                         "-o", str(output_path), 
                         "--sigma1", str(sigma2),
@@ -115,6 +116,8 @@ def run_pystripe(input_path,
                      gpu_chunksize = gpu_chunksize,
                      ram_loadsize = ram_loadsize,
                      num_workers = num_workers,
+                     rotate_and_flip = rotate_and_flip,
+                     extra_rotate_and_flip = extra_rotate_and_flip,
                      log_path = log_path,
                      check_corrupt = check_corrupt)
         
@@ -268,7 +271,7 @@ def show_output(tiles, input_path):
     bar_length = 72
     print('\nOVERALL DESTRIPING PROGRESS: {:.0%} [{}{}]'.format(pct, '#'*round(pct*bar_length), '-'*round((1-pct)*bar_length)))
     
-def check_mips(raw_dir, destriped_dir, tiles, **kwargs):
+def check_mips(raw_dir, destriped_dir, tiles, destripe_list_path, **kwargs):
     """
     Check MIP stacks in case we have to destripe these too. 
 
@@ -300,80 +303,50 @@ def check_mips(raw_dir, destriped_dir, tiles, **kwargs):
             if input_images != output_images:
                 print('\nDestriping {}...\n'.format(item))
                 
-                run_pystripe(input_path, output_path,
+                run_pystripe(input_path, output_path, use_gpu = False,
                             **kwargs)
+                update_destripe_list_txt(input_path, destripe_list_path)
     else:
         print("No MIP folders found in acquisition, skipping...")
 
-def finish_directory(input_path, output_path, metadata_version):
+def finish_directory(input_path, output_path):
     """
-    Show and save time stamp when finished, then move the .txt .ini and .json files to the new directory.
+    Move the .txt .ini and .json files to the new directory.
     """
-    time_stamp_finish(input_path, output_path, metadata_version)
     for file in Path(input_path).iterdir():
         file_name = os.path.split(file)[1]
         if Path(file).suffix in ['.txt', '.ini', '.json']:
             output_file = os.path.join(Path(output_path), file_name)
             shutil.copyfile(file, output_file)
-            
-def time_stamp_start(output_path):
-    time_file = os.path.join(output_path, DESTRIPE_TIME_STAMP_PATH)
-    try:
-        # If it already exists
-        with open(time_file, 'r') as f:
-            pass
-    except:
-        os.makedirs(Path(time_file).parent, exist_ok=True)
-        with open(time_file, 'w') as f:
-            f.write('Destriper Start Time: {}'.format(datetime.now().strftime("%m/%d/%Y, %H:%M:%S")))
 
-def time_stamp_finish(input_path, output_path, metadata_version):
-    finish_time = datetime.now()
-    time_file = os.path.join(output_path, DESTRIPE_TIME_STAMP_PATH)
+def create_destripe_list_txt(input_dir, destripe_list_path, tiles, metadata_version):
+    """
+    Based on the metadata, we create the list of folders that need to be destriped still. 
+    """
+    with open(destripe_list_path, "w") as f:
+        for tile in tiles:
+            relative_path = tile["path"]
+            full_path = input_dir / relative_path
+            f.write(str(full_path) + "\n")
 
-    with open(time_file, 'r') as f:
-        start_string = f.readlines()[0]
-        start_time = datetime.strptime(start_string[22:].strip(), "%m/%d/%Y, %H:%M:%S")
+            if metadata_version != 0:
+                # That means it's SmartSPIM, which means we have MIPs
+                channel_mip_name = relative_path.split("/")[0] + "_MIP"
+                item = f'{channel_mip_name}/{"/".join(relative_path.split("/")[1:])}'
+                full_mip_path = input_dir / item
+                f.write(str(full_mip_path) + "\n")
 
-    elapsed_time = finish_time - start_time
-    s = elapsed_time.seconds
-    hours = math.floor(s/3600)
-    minutes = math.floor(s/60)%60
-    seconds = s%60
-    timer_text = "\nDestriper Finish Time: {}".format(finish_time.strftime("%m/%d/%Y, %H:%M:%S"))
-    timer_text += "\nDestriper Elapsed Time: {:02}:{:02}:{:02}".format(hours, minutes, seconds)
 
-    if metadata_version == 6:
-        acq_file = os.path.join(input_path, 'acquisition log.txt')
-        with open(acq_file, 'r') as f:
-            lines = f.readlines()
-        line = lines[5]
-        acq_start = datetime.strptime(line[:line.index("\t")], "%Y-%m-%dT%H:%M:%S")
-        line = lines[-1]
-        acq_finish = datetime.strptime(line[:line.index("\t")], "%Y-%m-%dT%H:%M:%S")
-    elif metadata_version == 5:
-        acq_file = os.path.join(input_path, 'ASI_logging.txt')
-        with open(acq_file, 'r') as f:
-            lines = f.readlines()
-        line = lines[0]
-        acq_start = datetime.strptime(line[:line.index('M')+1], "%m/%d/%Y %I:%M:%S %p")
-        line = lines[-1]
-        acq_finish = datetime.strptime(line[:line.index('M')+1], "%m/%d/%Y %I:%M:%S %p")
-    else: # megaspim
-        # TODO: write the logic for megaspim metadata
-        pass
-
-    elapsed_time = acq_finish - acq_start
-    s = elapsed_time.seconds
-    hours = math.floor(s/3600)
-    minutes = math.floor(s/60)%60
-    seconds = s%60
-    timer_text += "\n\nAcquisition Start Time: {}".format(acq_start.strftime("%m/%d/%Y, %H:%M:%S"))
-    timer_text += "\nAcquisition Finish Time: {}".format(acq_finish.strftime("%m/%d/%Y, %H:%M:%S"))
-    timer_text += "\nAcquisition Elapsed Time: {:02}:{:02}:{:02}".format(hours, minutes, seconds)
-
-    with open(time_file, 'a') as f:
-        f.write(timer_text)
+def update_destripe_list_txt(input_path, destripe_list_path):
+    # Now remove the folder from the destripe_list
+    encoding = get_txt_encoding(destripe_list_path)
+    with open(destripe_list_path, 'r+', encoding=encoding) as fp:
+        lines = fp.readlines()  # Read all lines into a list
+        lines = [line for line in lines if str(input_path) not in line]
+        
+        fp.seek(0)  # Move the file pointer to the beginning
+        fp.writelines(lines)  # Write the updated lines back to the file
+        fp.truncate()  # Remove any remaining content beyond the new end of file
 
 
 def main():
@@ -381,12 +354,32 @@ def main():
     raw_dir = Path(args.input)
     destriped_dir = Path(args.output)
 
+    if args.log_path is None:
+        log_path = os.path.join(destriped_dir, "logs", "postprocessing_logs_%s.txt"%(str(datetime.now()).replace(' ','_').replace(':',',')))
+    else:
+        log_path = args.log_path
+
+    logger = get_logger(log_path)
+    logger.info(f"Starting destriping-on-the-fly on {raw_dir}, saving to {destriped_dir}")
+    tic = time.time()
         
     stall_counter = ['', 0, 0]
 
     metadata_version = args.metadata_version
 
-    if not args.is_smartspim:
+    # Get the spim type ot determine if we have to rotate and flip the destriped images
+    # Get whether we should do an extra rotation and flip if it's a Fire camera
+    metadata_path = raw_dir / "metadata.txt"
+    spim_type = get_spim_type(metadata_path)
+    extra_rotate_and_flip = False # This is a different rotation and flipping for MegaSPIM Fire camera
+    rotate_and_flip = False # This is for standard destriping
+    if spim_type == "Fire":
+        rotate_and_flip = True
+        extra_rotate_and_flip = True
+    elif spim_type == "MegaSPIM" or spim_type == "SacSPIM":
+        rotate_and_flip = True
+
+    if spim_type != "SmartSPIM":
         metadata_version = 0
         # Then it is Dali or MegaSPIM
         metadata = get_megaspim_metadata(raw_dir) # TODO: write this functino for reading megaspim_metadata
@@ -394,7 +387,29 @@ def main():
         metadata = get_metadata(raw_dir)
     else:
         metadata = get_metadata_v5(raw_dir)
+
+    # we also want to write to a destripe_folder_list.txt to keep track of the un-destriped stacks in case this fails. Then, the normal destriping can
+    # take care of this
+    destripe_list_path = destriped_dir / "destripe_folder_list.txt"
+    if not destripe_list_path.exists():
+        tiles = count_tiles(raw_dir, destriped_dir, metadata, metadata_version)
+        create_destripe_list_txt(raw_dir, destripe_list_path, tiles, metadata_version)
+
     
+    # Make params dictionary
+    destripe_params = {
+            "sigma1": args.sigma1,
+            "sigma2": args.sigma2,
+            "gpu_chunksize": args.gpu_chunksize,
+            "ram_loadsize": args.ram_loadsize,
+            "num_workers": args.num_workers,
+            "rotate_and_flip": rotate_and_flip,
+            "extra_rotate_and_flip": extra_rotate_and_flip,
+            "log_path": log_path,
+            "check_corrupt": args.check_corrupt,
+        }
+
+
     # Main loop for destriping tiles as they come up
     while True:
         # After getting metadata, we get the tiles
@@ -409,16 +424,8 @@ def main():
                 break # Don't need to keep going through
         if finished:
             print('\nAll tiles have been destriped.  Checking for Maximum Intensity Projections...')
-            check_mips(raw_dir, destriped_dir, tiles,
-                       sigma1 = args.sigma1,
-                        sigma2 = args.sigma2,
-                        use_gpu = args.use_gpu,
-                        gpu_chunksize = args.gpu_chunksize,
-                        ram_loadsize = args.ram_loadsize,
-                        num_workers = args.num_workers,
-                        log_path = args.log_path,
-                        check_corrupt = args.check_corrupt)
-            finish_directory(raw_dir, destriped_dir, metadata_version)
+            check_mips(raw_dir, destriped_dir, tiles, destripe_list_path, **destripe_params)
+            finish_directory(raw_dir, destriped_dir)
             break
 
         destripe_tile = False
@@ -442,18 +449,15 @@ def main():
         if destripe_tile:
             input_path = os.path.join(raw_dir, destripe_tile)
             output_path = os.path.join(destriped_dir, destripe_tile)
-            time_stamp_start(destriped_dir)
             print('\nDestriping {}...\n'.format(destripe_tile))
             time.sleep(1)
-            run_pystripe(input_path, output_path,
-                         sigma1 = args.sigma1,
-                        sigma2 = args.sigma2,
-                        use_gpu = args.use_gpu,
-                        gpu_chunksize = args.gpu_chunksize,
-                        ram_loadsize = args.ram_loadsize,
-                        num_workers = args.num_workers,
-                        log_path = args.log_path,
-                        check_corrupt = args.check_corrupt)
+            if tile["expected"] == 1:
+                use_gpu = False
+            else:
+                use_gpu = args.use_gpu
+            run_pystripe(input_path, output_path, use_gpu = use_gpu, **destripe_params)
+            update_destripe_list_txt(input_path, destripe_list_path)
+            
         elif waiting_tile:
             # Wait for the current tile to finish being acquired
             print('\nWaiting for current tile: {} to finish being acquired...'.format(waiting_tile['path']))
@@ -470,7 +474,8 @@ def main():
 
         else:
             time.sleep(5)
-    
+
+    logger.info(f"Destriping all stacks took {time.time()-tic} seconds")
 
 if __name__ == "__main__":
     main()

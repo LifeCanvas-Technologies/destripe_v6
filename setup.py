@@ -27,9 +27,6 @@ setuptools.setup(name='cl_destripe_6',
       classifiers=CLASSIFIERS,
       # install_requires=REQUIREMENTS,
       entry_points={
-        'console_scripts' : ['live-destripe=destripegui.destripegui:main',
-                             'cpu-destripe=destripegui.destripe.core:main',
-                              'gpu-destripe=destripegui.destripe.core_gpu:main',
-                              'revert_from_orig=destripegui.revert_from_orig:main',]
+        'console_scripts' : ['live-destripe=live_destriper.destripegui:main']
       }
 )
