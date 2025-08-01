@@ -21,8 +21,8 @@ warnings.filterwarnings("ignore")
 from collections import namedtuple, OrderedDict, Counter
 
 from . import supported_output_extensions
-from .utils import find_all_images, normalize_flat, interpolate, gaussian_filter, imread, imsave, get_extension, attempt_read_threshold, threshold_img
-
+from .utils import find_all_images, interpolate, imread, imsave, get_extension, attempt_read_threshold, threshold_img
+from .filter_utils import normalize_flat, gaussian_filter
 
 
 class Destriper:

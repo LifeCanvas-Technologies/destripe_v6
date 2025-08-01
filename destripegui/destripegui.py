@@ -1,37 +1,45 @@
-import os, sys, time, csv, re, json
+import os, time, csv, json
 import math
-import multiprocessing
 import configparser
 from pathlib import Path
 from datetime import datetime
-import traceback
 import shutil
-from win32event import CreateMutex
-from win32api import GetLastError
-from winerror import ERROR_ALREADY_EXISTS
 from tqdm import tqdm
-from sys import exit
-#import torch
-import subprocess
-from pprint import pprint
 import math
 from tabulate import tabulate
 from PIL import Image
+import argparse
+import psutil
+import glob
 
-from destripegui.destripe.core import main as cpu_destripe
+
 from destripegui.destripe.utils import find_all_images
 from destripegui.destripe import supported_extensions
 
-def get_configs(config_path):
-    reader = configparser.ConfigParser()   
-    reader.read(config_path)
-    configs = {}
-    for section in reader.sections():
-        for (key, val) in reader.items(section):
-            if val.lower() == 'true': val = True
-            elif val.lower() == 'false': val = False
-            configs[key] = val
-    return configs
+DESTRIPE_TIME_STAMP_PATH = 'logs/destriping_time_stamps.txt'
+
+def parse_args(raw_args=None):
+    """
+    Specify which folder to perform live destriping on.
+    """
+    parser = argparse.ArgumentParser(description="Get what destriping parameters to use and which path to perform live destriping on.")
+    parser.add_argument("--input", "-i", help="Path to overall input folder", type=str, required=True)
+    parser.add_argument("--output", "-o", help="Path to output image or path (Default: x_destriped)", type=str, required=True)
+    parser.add_argument("--sigma1", "-s1", help="Foreground bandwidth [pixels], larger = more filtering", type=float, default=256)
+    parser.add_argument("--sigma2", "-s2", help="Background bandwidth [pixels] (Default: 0, off)", type=float, default=0)
+    parser.add_argument("--num-workers", help="Number of parallel processes to use for all aspects of destriping (particularly I/O) (Default: Number of physical cores)", type=int, default=psutil.cpu_count(logical=False))
+    parser.add_argument("--ram-loadsize", help="Number of images to load at once on RAM GPU (Default: None, infer from available RAM)", type=int, default=None)
+    parser.add_argument("--gpu-chunksize", help="Number of images to destripe at once in the GPU (Default: None, infer from available vRAM)", type=int, default=None)
+    parser.add_argument("--is-smartspim", action="store_true", default=False, help="Whether it's smartspim or megaspim postprocessing, which affects metadata reading.")
+    parser.add_argument('--log-path',type=str,required=False, default=None, help="path to the logs for postprocessing")
+    parser.add_argument("--use-gpu", action="store_true", help="Whether to use GPU or not when destriping")
+
+    # Options unique to live destriping
+    parser.add_argument("--check-corrupt", action="store_true", help="Whether to check for corrupt images after a stack is finished destriping.")
+    parser.add_argument("--metadata-version", type=int, default=5, required=False, help="Which version of metadata to read from.")
+    parser.add_argument("--stall-limit", required=False, type=int, default=60, help="How much time (in seconds) we wait until we error out (potentially acquisition failed)")
+    args = parser.parse_args(raw_args)
+    return args
 
 def check_for_bad_images(path):
     print('\nChecking for corrupt files...')
@@ -52,70 +60,71 @@ def check_for_bad_images(path):
     return count
     
 
-def run_pystripe(input_path, output_path, current_dir):
-    # print('test')
-    # input_path = Path(dir['path'])
-    # output_path = Path(dir['output_path'])
-    sig_strs = current_dir['metadata']['sample metadata']['destripe'].split('/')
-    sigma = list(int(sig_str) for sig_str in sig_strs)
-
-    # sigma = [256, 0]
-    workers = int(configs['workers'])
-    chunks = int(configs['chunks'])
-    use_gpu = int(configs["use_gpu"])
-    cpu_readers = int(configs["cpu_readers"])
-    gpu_chunksize = int(configs["gpu_chunksize"])
-    ram_loadsize = int(configs["ram_loadsize"])
-
-    contents = os.listdir(input_path)
-    if len(contents) == 1:
-        # input_path = os.path.join(input_path, contents[0])
-        # output_path = os.path.join(output_path, contents[0])
-        use_gpu = 0
-
-    if 'MIP' in input_path:
-        use_gpu = 0
-
+def run_pystripe(input_path, 
+                 output_path,
+                 sigma1 = 256,
+                 sigma2 = 0,
+                 use_gpu = True,
+                 gpu_chunksize = None, 
+                 ram_loadsize = None, 
+                 num_workers = psutil.cpu_count(logical=False),
+                 log_path = None,
+                 check_corrupt = False):
     if use_gpu:
         print("Using GPU Destriper")
         from destripegui.destripe.core_gpu import main as gpu_destripe
         cmd = ["-i", str(input_path),
                         "-o", str(output_path), 
-                        "--sigma1", str(sigma[0]),
-                        "--sigma2", str(sigma[1]),
-                        "--cpu-readers", str(workers), 
-                        "--gpu-chunksize", str(gpu_chunksize),
-                        "--extra-smoothing", "True"]
-        if ram_loadsize > 0:
+                        "--sigma1", str(sigma1),
+                        "--sigma2", str(sigma2),
+                        "--cpu-readers", str(num_workers)]
+        if ram_loadsize is not None:
             cmd.append("--ram-loadsize")
             cmd.append(str(ram_loadsize))
+        if gpu_chunksize is not None:
+            cmd.append("--gpu-chunksize")
+            cmd.append(str(gpu_chunksize))
+        if log_path is not None:
+            cmd.append("--log-path")
+            cmd.append(str(log_path))
         print(cmd)
         
         gpu_destripe(cmd)        
 
     else:
         print("Using CPU Destriper")
+        from destripegui.destripe.core import main as cpu_destripe
         cpu_destripe(["-i", str(input_path),
                         "-o", str(output_path), 
-                        "--sigma1", str(sigma[0]),
-                        "--sigma2", str(sigma[1]),
-                        "--workers", str(workers),
-                        "--chunks", str(chunks)])
+                        "--sigma1", str(sigma2),
+                        "--sigma2", str(sigma2),
+                        "--workers", str(num_workers)])
     
-    if 'MIP' in input_path or not configs['check_corrupt']:
+    if 'MIP' in input_path or not check_corrupt:
+        # Finish up. 
         return
 
     corrupted = check_for_bad_images(output_path)
     if corrupted > 0:
         print('{} corrupt images found in {}.  This folder is being re-destriped'.format(corrupted, output_path))
-        run_pystripe(input_path, output_path, current_dir)
+        run_pystripe(input_path,
+                     output_path,
+                     sigma1 = sigma1,
+                     sigma2 = sigma2,
+                     use_gpu = use_gpu,
+                     gpu_chunksize = gpu_chunksize,
+                     ram_loadsize = ram_loadsize,
+                     num_workers = num_workers,
+                     log_path = log_path,
+                     check_corrupt = check_corrupt)
+        
 
-def get_metadata(dir):
+def get_metadata(input_path):
     # builds metadata dict
-    metadata_path = os.path.join(dir['path'], 'metadata.json')
+    metadata_path = input_path / 'metadata.json'
     with open(metadata_path, 'r') as f:
         metadata = json.load(f)
-        dir['metadata'] = metadata
+    return metadata
 
 def pair_key_value_lists(keys, values):
     # utility function for building metadata dict
@@ -131,7 +140,7 @@ def pair_key_value_lists(keys, values):
 def get_target_number(z_block, z_step):
     # Calculates number of images per tile
     try:
-        steps_per_tile = max(math.ceil(float(z_block) / float(z_step)) - 1, 1)
+        steps_per_tile = max(math.ceil(float(z_block) / float(z_step)), 1) # used to have -1 but this is incorrect
     except:
         steps_per_tile = 1
     return steps_per_tile
@@ -144,9 +153,9 @@ def parse_destripe_tag(tag):
             tag = tag.replace(i, '')
     return status, tag
 
-def get_metadata_v5(dir):
+def get_metadata_v5(input_path):
     # builds metadata dict
-    metadata_path = os.path.join(dir['path'], 'metadata.txt')
+    metadata_path = input_path / 'metadata.txt'
 
     metadata_dict = {
         'channels': [],
@@ -198,82 +207,37 @@ def get_metadata_v5(dir):
         if int(d['Skip']) == 1:
             d['NumImages'] = target_number
         metadata_dict['tiles'].append(d)
+    return metadata_dict
 
-    dir['metadata'] = metadata_dict
+def get_megaspim_metadata(input_path):
+    metadata_path = input_path / "metadata.json" #
+    # TODO: Fill this out
+    pass
 
-def search_directory(search_dir, ac_list, depth):
-    # Recursive search function through input_dir to find directories with metadata.json.  Ignores no_list
-
-    try:
-        contents = os.listdir(search_dir)
-    except:
-        print('Could not access input directory: {}.'.format(configs['input_dir']))
-        print('Make sure drive is accessible, and not open in another program.')
-        x = input('Press Enter to retry...')
-        search_loop()
-
-    is_acquisition = True
-    if 'metadata.txt' not in contents: is_acquisition = False
-    if 'sequence.json' in contents and configs['version'] != '6': is_acquisition = False
-    if 'sequence.json' not in contents and configs['version'] == '6': is_acquisition = False
-
-    if is_acquisition:
-        ac_list.append({
-            'path': search_dir, 
-            'output_path': os.path.join(configs['output_dir'], os.path.relpath(search_dir, configs['input_dir']))
-        })
-        # log("Adding {} to provisional Acquisition Queue".format(search_dir), False)
-        return ac_list
-
-    if depth == 0: return ac_list
-    for item in contents:
-        item_path = os.path.join(search_dir, item)
-        if os.path.isdir(item_path) and item_path not in configs['no_list']:
-            ac_list = search_directory(item_path, ac_list, depth-1)
-    return ac_list
-        
-def get_acquisition_dirs():
-    # run recursive search for new directories.  Build metadata dicts. Checks metadata flags and folder names to make
-    # sure its actually new, and adds to no_list if not 
-
-    search_dir = configs['input_dir']
-    ac_dirs = search_directory(search_dir, list(), depth=3)
-            
-    for dir in ac_dirs:
-        if configs['version'] == '6':
-            get_metadata(dir)
-        else:
-            get_metadata_v5(dir)
-   
-    unfinished_dirs = []    
-    for dir in ac_dirs:
-        destripe_status = dir['metadata']['sample metadata']['destripe_status']
-        if destripe_status == 'true':
-            unfinished_dirs.append(dir)
-        else:
-            configs['no_list'].append(dir['path'])
-    
-    if len(unfinished_dirs) > 0: unfinished_dirs.sort(key=lambda x: x['path'])
-    return unfinished_dirs
-
-def count_tiles(dir):
+def count_tiles(input_path, output_path, metadata, metadata_version):
     tiles = []
-    for tile in dir['metadata']['tiles']:
+    for tile in metadata['tiles']:
         expected = int(tile['NumImages'])
         laser = tile['Laser']
         filter = tile['Filter']
         x = tile['X']
         y = tile['Y']
         
-        if configs['version'] == '6':
+        if metadata_version==0:
+            print("MegaSPIM")
+            pass 
+        elif metadata_version==6:
             ch = tile['FilterChannel']
             tile_path = os.path.join('Ex_{}_Em_{}_Ch{}'.format(laser, filter, ch), x, '{}_{}'.format(x, y))
         else:
             tile_path = os.path.join('Ex_{}_Ch{}'.format(laser, filter), x, '{}_{}'.format(x, y))
 
-        input_images = len(os.listdir(os.path.join(dir['path'], tile_path)))
+        # input_images = len(os.listdir(os.path.join(input_path, tile_path))) # This gets all files which may include other stuff
+        input_images = len(glob.glob(os.path.join(input_path, tile_path, "*.tif*")) +\
+                           glob.glob(os.path.join(input_path, tile_path, "*.png")) +\
+                           glob.glob(os.path.join(input_path, tile_path, "*.raw")))
         try:
-            output_images = len(os.listdir(os.path.join(dir['output_path'], tile_path)))
+            output_images = len(glob.glob(os.path.join(output_path, tile_path, "*.tif*")))
         except:
             output_images = 0      
         tiles.append({
@@ -282,14 +246,14 @@ def count_tiles(dir):
             'output_images': output_images,
             'expected': expected
         })
-    dir['tiles'] = tiles
+    return tiles
 
-def show_output(ac_dirs, current_dir):
+def show_output(tiles, input_path):
     headers = ['Tile', 'Images Expected', 'Images on Acquisition Drive', 'Images on Stitch Drive']
     data = []
     total_images = 0
     total_destriped = 0
-    for tile in current_dir['tiles']:
+    for tile in tiles: # list of dictionaries of tile dictionaries
         total_images += tile['expected']
         total_destriped += tile['output_images']
         data.append([
@@ -298,162 +262,78 @@ def show_output(ac_dirs, current_dir):
             tile['input_images'],
             tile['output_images']
         ])
-    print('Current Acquisition: {}\n'.format(current_dir['path']))
+    print('Current Acquisition: {}\n'.format(input_path))
     print(tabulate(data, headers))
     pct = total_destriped / total_images
     bar_length = 72
     print('\nOVERALL DESTRIPING PROGRESS: {:.0%} [{}{}]'.format(pct, '#'*round(pct*bar_length), '-'*round((1-pct)*bar_length)))
-
-    if len(ac_dirs) > 1:
-        print('\nAdditional Acquisitions in Destriping Queue:')
-        for i in range(1, len(ac_dirs)):
-            print(ac_dirs[i]['path'])
     
-def check_mips(current_dir):
-    for item in os.listdir(current_dir['path']):
-        if 'MIP' in item:
-            input_path = os.path.join(current_dir['path'], item)
-            output_path = os.path.join(current_dir['output_path'], item)
+def check_mips(raw_dir, destriped_dir, tiles, **kwargs):
+    """
+    Check MIP stacks in case we have to destripe these too. 
+
+    **kwargs are kwargs for pystripe
+    """
+    # First check to see if MIPs are even created:
+    has_MIPS = False
+    for item in os.listdir(raw_dir):
+        if "MIP" in item and os.path.isdir(os.path.join(raw_dir, item)):
+            has_MIPS = True
+            break
+
+    if has_MIPS:
+        for tile in tiles: # We get the names of which MIPs should have been created
+            tile_path = tile["path"]
+            channel_mip_name = tile_path.split("/")[0] + "_MIP"
+            item = f'{channel_mip_name}/{"/".join(tile_path.split("/")[1:])}'
+
+            input_path = os.path.join(raw_dir, item)
+            output_path = os.path.join(destriped_dir, item)
             try:
-                output_images = len(os.listdir(output_path))
+                output_images = len(glob.glob(os.path.join(output_path, "*.tif*")))
             except:
                 output_images = 0
 
-            if len(os.listdir(input_path)) != output_images:
+            input_images = len(glob.glob(os.path.join(input_path, "*.tif*")) +\
+                        glob.glob(os.path.join(input_path, "*.png")) +\
+                        glob.glob(os.path.join(input_path, "*.raw")))
+            if input_images != output_images:
                 print('\nDestriping {}...\n'.format(item))
-                run_pystripe(input_path, output_path, current_dir)
+                
+                run_pystripe(input_path, output_path,
+                            **kwargs)
+    else:
+        print("No MIP folders found in acquisition, skipping...")
 
-def finish_directory(dir):
-    configs['no_list'].append(dir['path'])
-    if configs['time_stamp']:
-        time_stamp_finish(dir)
-
-    for file in Path(dir['path']).iterdir():
+def finish_directory(input_path, output_path, metadata_version):
+    """
+    Show and save time stamp when finished, then move the .txt .ini and .json files to the new directory.
+    """
+    time_stamp_finish(input_path, output_path, metadata_version)
+    for file in Path(input_path).iterdir():
         file_name = os.path.split(file)[1]
         if Path(file).suffix in ['.txt', '.ini', '.json']:
-            output_file = os.path.join(Path(dir['output_path']), file_name)
+            output_file = os.path.join(Path(output_path), file_name)
             shutil.copyfile(file, output_file)
-
-    if configs['version'] == '6':
-        change_status(dir, 'in', 'done')
-        change_status(dir, 'out', 'done')
-    else:
-        prepend_tag(dir, 'in', 'D')
-        prepend_tag(dir, 'out', 'D')
-
-    # x = input('about to rename...')
-    append_folder_name(dir, 'in', configs['input_done'])
-    append_folder_name(dir, 'out', configs['output_done'])
-
-    # log(' finishing {}'.format(dir['path']), True)
-
-def append_folder_name(dir, drive, msg, attempts = 0):
-    global reconnect
-    if drive == 'in':
-        path = dir['path'] 
-    else:
-        path = dir['output_path']
-
-    try:
-        split = os.path.split(path)
-        if msg not in split[1]:
-            new_dir_name = split[1] + msg
-            new_path = os.path.join(split[0], new_dir_name)
-            os.rename(path, new_path)
-    except Exception as error:
-        print(error)
-        print('Cannot access {} to rename folder'.format(path))
-        if configs['reconnect']:
-            print('Retrying in 5 seconds')
-            time.sleep(5)
-        else:
-            x = input('Make sure it is accessible and not open in another program, then press Enter to retry...\n')
-        append_folder_name(dir, drive, msg)
-
-def prepend_tag(dir, drive, msg):
-    # prepend tag to metadata file
-    
-    if drive == 'in':
-        metadata_path = os.path.join(dir['path'], 'metadata.txt')
-    else:
-        metadata_path = os.path.join(dir['output_path'], 'metadata.txt')
-    try:
-        with open(metadata_path, errors="ignore") as f:
-            reader = csv.reader(f, dialect='excel', delimiter='\t')
-            line_list = list(reader)
             
-        destripe_position = line_list[0].index('Destripe')
-        destripe = line_list[1][destripe_position]
-        for char in 'ACDNacdn':
-            destripe = destripe.replace(char, '')
-
-        line_list[1][destripe_position] = msg + destripe
-        # os.remove(metadata_path)
-        with open(metadata_path, 'w', newline='') as f:
-            writer = csv.writer(f, dialect='excel', delimiter='\t')
-            for row in line_list:
-                writer.writerow(row)
-    except:
-        print('Cannot access {} to change destripe tag'.format(metadata_path))
-        x = input('Make sure it is accessible and not open in another program, then press Enter to retry...\n')
-        prepend_tag(dir, drive, msg)
-
-def change_status(dir, drive, msg):
-    # prepend tag to metadata file
-
-    if drive == 'in':
-        metadata_path = os.path.join(dir['path'], 'metadata.json')
-    else:
-        metadata_path = os.path.join(dir['output_path'], 'metadata.json')
+def time_stamp_start(output_path):
+    time_file = os.path.join(output_path, DESTRIPE_TIME_STAMP_PATH)
     try:
-        with open(metadata_path, 'r') as f:
-            metadata = json.load(f)
-        metadata['sample metadata']['destripe_status'] = msg
-
-        with open(metadata_path, 'w') as f:
-            json.dump(metadata, f, indent=2)
-
-    except:
-        print('Cannot access {} to change destripe_status'.format(metadata_path))
-        x = input('Make sure it is accessible and not open in another program, then press Enter to retry...\n')
-        change_status(dir, drive, msg)
-
-def abort(dir):
-    # Perform tasks needed to respond to aborted acquisition
-    
-    print("\nAborting {}...\n".format(dir['path']))
-
-    if configs['version'] == '6':
-        change_status(dir, 'in', 'aborted')
-    else:
-        prepend_tag(dir, 'in', 'A')
-    append_folder_name(dir, 'in', configs['input_abort'])
-
-    if os.path.exists(dir['output_path']):
-        if os.path.exists(os.path.join(dir['output_path'], 'metadata.json')):
-            if configs['version'] == '6':
-                change_status(dir, 'out', 'aborted')
-            else:
-                prepend_tag(dir, 'out', 'A')
-        append_folder_name(dir, 'out', configs['output_abort'])
-            
-def time_stamp_start(current_dir):
-    time_file = os.path.join(current_dir['output_path'], 'Time Stamps.txt')
-    try:
+        # If it already exists
         with open(time_file, 'r') as f:
             pass
     except:
-        os.makedirs(current_dir['output_path'])
+        os.makedirs(Path(time_file).parent, exist_ok=True)
         with open(time_file, 'w') as f:
             f.write('Destriper Start Time: {}'.format(datetime.now().strftime("%m/%d/%Y, %H:%M:%S")))
 
-def time_stamp_finish(current_dir):
+def time_stamp_finish(input_path, output_path, metadata_version):
     finish_time = datetime.now()
-    time_file = os.path.join(current_dir['output_path'], 'Time Stamps.txt')
+    time_file = os.path.join(output_path, DESTRIPE_TIME_STAMP_PATH)
 
     with open(time_file, 'r') as f:
         start_string = f.readlines()[0]
-        start_time = datetime.strptime(start_string[22:], "%m/%d/%Y, %H:%M:%S")
+        start_time = datetime.strptime(start_string[22:].strip(), "%m/%d/%Y, %H:%M:%S")
 
     elapsed_time = finish_time - start_time
     s = elapsed_time.seconds
@@ -463,22 +343,25 @@ def time_stamp_finish(current_dir):
     timer_text = "\nDestriper Finish Time: {}".format(finish_time.strftime("%m/%d/%Y, %H:%M:%S"))
     timer_text += "\nDestriper Elapsed Time: {:02}:{:02}:{:02}".format(hours, minutes, seconds)
 
-    if configs['version'] == '6':
-        acq_file = os.path.join(current_dir['path'], 'acquisition log.txt')
+    if metadata_version == 6:
+        acq_file = os.path.join(input_path, 'acquisition log.txt')
         with open(acq_file, 'r') as f:
             lines = f.readlines()
         line = lines[5]
         acq_start = datetime.strptime(line[:line.index("\t")], "%Y-%m-%dT%H:%M:%S")
         line = lines[-1]
         acq_finish = datetime.strptime(line[:line.index("\t")], "%Y-%m-%dT%H:%M:%S")
-    else:
-        acq_file = os.path.join(current_dir['path'], 'ASI_logging.txt')
+    elif metadata_version == 5:
+        acq_file = os.path.join(input_path, 'ASI_logging.txt')
         with open(acq_file, 'r') as f:
             lines = f.readlines()
         line = lines[0]
         acq_start = datetime.strptime(line[:line.index('M')+1], "%m/%d/%Y %I:%M:%S %p")
         line = lines[-1]
         acq_finish = datetime.strptime(line[:line.index('M')+1], "%m/%d/%Y %I:%M:%S %p")
+    else: # megaspim
+        # TODO: write the logic for megaspim metadata
+        pass
 
     elapsed_time = acq_finish - acq_start
     s = elapsed_time.seconds
@@ -492,129 +375,101 @@ def time_stamp_finish(current_dir):
     with open(time_file, 'a') as f:
         f.write(timer_text)
 
-def search_loop():
-    while True:
-        print('\n-------------\n\n')
-        ac_dirs = get_acquisition_dirs()
-
-        if len(ac_dirs) == 0:
-            print("Waiting for new acquisitions...")
-            time.sleep(5)
-            continue
-        if len(ac_dirs) > 0:
-            current_dir = ac_dirs[0]
-            count_tiles(current_dir)
-            
-            show_output(ac_dirs, current_dir)
-            if configs['safe_mode']:
-                x = input('Press Enter to exit program...')
-                exit()
-
-            finished = True
-            for tile in current_dir['tiles']:
-                if tile['output_images'] < tile['expected']:
-                    finished = False
-            if finished:
-                print('\nAll tiles have been destriped.  Checking for Maximum Intensity Projections...')
-                check_mips(current_dir)
-                finish_directory(current_dir)
-                continue
-
-            destripe_tile = False
-            waiting_tile = False
-
-            for tile in current_dir['tiles']:
-                if tile['input_images'] >= tile['expected'] and tile['output_images'] < tile['expected']:
-                    destripe_tile = tile['path']
-                    break
-
-            if not destripe_tile:
-                for tile in current_dir['tiles']:
-                    if tile['input_images'] > 0 and tile['output_images'] == 0:
-                        waiting_tile = tile
-                        break 
-            
-            if destripe_tile:
-                input_path = os.path.join(current_dir['path'], destripe_tile)
-                output_path = os.path.join(current_dir['output_path'], destripe_tile)
-                if configs['time_stamp']:
-                    time_stamp_start(current_dir)
-                print('\nDestriping {}...\n'.format(destripe_tile))
-                time.sleep(1)
-                run_pystripe(input_path, output_path, current_dir)
-
-            elif waiting_tile:
-                print('\nWaiting for current tile: {} to finish being acquired...'.format(waiting_tile['path']))
-                if configs['stall_counter'][0] == waiting_tile['path'] and configs['stall_counter'][1] == waiting_tile['input_images']:
-                    configs['stall_counter'][2] += 1
-                else:
-                    configs['stall_counter'][0] = waiting_tile['path']
-                    configs['stall_counter'][1] = waiting_tile['input_images']
-                    configs['stall_counter'][2] = 0
-
-                if configs['stall_limit'] and configs['stall_counter'][2] > int(configs['stall_limit']):
-                    x = input('\nThis acquisition ({}) seems to be incomplete.  Mark as aborted (y/n)?\n'.format(current_dir['path']))
-                    if x in 'yesYesyeahsure':
-                        abort(current_dir)
-                        continue
-                time.sleep(5)
-
-            else:
-                time.sleep(5)
 
 def main():
-    # print('testing')
-    if 'configs' not in globals():
-        double_test = CreateMutex(None, 1, 'A unique mutex name')
-        if GetLastError(  ) == ERROR_ALREADY_EXISTS:
-            # Take appropriate action, as this is the second
-            # instance of this script; for example:
-            print('Another instance of destripegui is already running')
-            exit(1)
+    args = parse_args()
+    raw_dir = Path(args.input)
+    destriped_dir = Path(args.output)
 
-    global configs
-    
-    print('Reading config file...\n')
-
-    config_path = Path(__file__).parent / 'data/config.ini'
-    configs = get_configs(config_path)
-
-    configs['input_dir'] = Path(configs['input_dir'])
-    configs['output_dir'] = Path(configs['output_dir'])
-
-    configs['safe_mode'] = False
-    try:
-        if sys.argv[1] == '-s':
-            configs['safe_mode'] = True
-            print('\nRunning in Safe Mode.  No changes will be made to any files.\n')
-    except:
-        pass
         
-    configs['stall_counter'] = ['', 0, 0]
-    configs['no_list'] = []
+    stall_counter = ['', 0, 0]
 
-    if 'reconnect' not in configs.keys(): configs['reconnect'] = False
-    if 'check_corrupt' not in configs.keys(): configs['check_corrupt'] = False
-    if 'stall_limit' not in configs.keys(): configs['stall_limit'] = False
-    if 'time_stamp' not in configs.keys(): configs['time_stamp'] = False  
+    metadata_version = args.metadata_version
 
-    try:
-        x = os.listdir(configs['input_dir'])
-    except:
-        print('Could not access input directory: {}.'.format(configs['input_dir']))
-        print('Make sure drive is accessible, or change drive location in config file: {}'.format(config_path))
-        x = input('Press Enter to retry...')
-        main()
-    try:
-        x = os.listdir(configs['output_dir'])
-    except:
-        print('Could not access output directory: {}.'.format(configs['output_dir']))
-        print('Make sure drive is accessible, or change drive location in config file: {}'.format(config_path))
-        x = input('Press Enter to retry...')
-        main()
+    if not args.is_smartspim:
+        metadata_version = 0
+        # Then it is Dali or MegaSPIM
+        metadata = get_megaspim_metadata(raw_dir) # TODO: write this functino for reading megaspim_metadata
+    elif args.metadata_version==6:
+        metadata = get_metadata(raw_dir)
+    else:
+        metadata = get_metadata_v5(raw_dir)
     
-    print('\nScanning {} for new acquisitions...\n'.format(configs['input_dir']))
-    search_loop()
+    # Main loop for destriping tiles as they come up
+    while True:
+        # After getting metadata, we get the tiles
+        tiles = count_tiles(raw_dir, destriped_dir, metadata, metadata_version)
+        show_output(tiles, raw_dir)
+
+        # Check to see if we've finished destriping the main tiles yet.
+        finished = True
+        for tile in tiles:
+            if tile['output_images'] < tile['expected']:
+                finished = False
+                break # Don't need to keep going through
+        if finished:
+            print('\nAll tiles have been destriped.  Checking for Maximum Intensity Projections...')
+            check_mips(raw_dir, destriped_dir, tiles,
+                       sigma1 = args.sigma1,
+                        sigma2 = args.sigma2,
+                        use_gpu = args.use_gpu,
+                        gpu_chunksize = args.gpu_chunksize,
+                        ram_loadsize = args.ram_loadsize,
+                        num_workers = args.num_workers,
+                        log_path = args.log_path,
+                        check_corrupt = args.check_corrupt)
+            finish_directory(raw_dir, destriped_dir, metadata_version)
+            break
+
+        destripe_tile = False
+        waiting_tile = False
+
+        # Get the next tile to destripe
+        for tile in tiles:
+            if tile['input_images'] >= tile['expected'] and tile['output_images'] < tile['expected']:
+                destripe_tile = tile['path']
+                break
+        
+        # If no tile is found that is needed to be destriped, then we wait for a tile that has input images but currently has not been finished
+        # so destriping has not started yet
+        if not destripe_tile:
+            for tile in tiles:
+                if tile['input_images'] > 0 and tile['output_images'] == 0:
+                    waiting_tile = tile
+                    break 
+        
+        # If there is a destripe tile, then we start destriping it
+        if destripe_tile:
+            input_path = os.path.join(raw_dir, destripe_tile)
+            output_path = os.path.join(destriped_dir, destripe_tile)
+            time_stamp_start(destriped_dir)
+            print('\nDestriping {}...\n'.format(destripe_tile))
+            time.sleep(1)
+            run_pystripe(input_path, output_path,
+                         sigma1 = args.sigma1,
+                        sigma2 = args.sigma2,
+                        use_gpu = args.use_gpu,
+                        gpu_chunksize = args.gpu_chunksize,
+                        ram_loadsize = args.ram_loadsize,
+                        num_workers = args.num_workers,
+                        log_path = args.log_path,
+                        check_corrupt = args.check_corrupt)
+        elif waiting_tile:
+            # Wait for the current tile to finish being acquired
+            print('\nWaiting for current tile: {} to finish being acquired...'.format(waiting_tile['path']))
+            if stall_counter[0] == waiting_tile['path'] and stall_counter[1] == waiting_tile['input_images']:
+                stall_counter[2] += 1
+            else:
+                stall_counter[0] = waiting_tile['path']
+                stall_counter[1] = waiting_tile['input_images']
+                stall_counter[2] = 0
+
+            if stall_counter and stall_counter[2] > args.stall_limit:
+                raise ValueError(f"Stall limit of {args.stall_limit} reached, assuming aborted acquisition.")
+            time.sleep(5)
+
+        else:
+            time.sleep(5)
     
 
 if __name__ == "__main__":

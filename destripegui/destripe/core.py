@@ -10,7 +10,6 @@ import imageio as iio
 import pywt
 import multiprocessing
 import tqdm
-from dcimg import DCIMGFile
 from . import raw
 import warnings
 import shutil
@@ -63,66 +62,6 @@ def imread(path):
         img = iio.imread(path)
 
     return img
-
-
-def imread_dcimg(path, z):
-    """Load a slice from a DCIMG file
-
-    Parameters
-    ------------
-    path : str
-        path to DCIMG file
-    z : int
-        z slice index to load
-
-    Returns
-    --------
-    img : ndarray
-        image as numpy array
-
-    """
-    with DCIMGFile(path) as arr:
-        img = arr[z]
-    return img
-
-
-def check_dcimg_shape(path):
-    """Returns the image shape of a DCIMG file
-
-    Parameters
-    ------------
-    path : str
-        path to DCIMG file
-
-    Returns
-    --------
-    shape : tuple
-        image shape
-
-    """
-    with DCIMGFile(path) as arr:
-        shape = arr.shape
-    return shape
-
-
-def check_dcimg_start(path):
-    """Returns the starting z position of a DCIMG substack.
-
-    This function assumes a zero-padded 6 digit filename in tenths of micron.
-    For example, `0015250.dicom` would indicate a substack starting at z = 1525 um.
-
-    Parameters
-    ------------
-    path : str
-        path to DCIMG file
-
-    Returns
-    --------
-    start : int
-        starting z position in tenths of micron
-
-    """
-    return int(os.path.basename(path).split('.')[0])
 
 
 def imsave(path, img, compression=1, output_format:Optional[str]=None, rotate_and_flip:bool = False):
