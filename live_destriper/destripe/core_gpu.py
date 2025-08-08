@@ -23,7 +23,7 @@ import logging
 import atexit
 
 from . import supported_output_extensions
-from .utils import find_all_images_in_dir, interpolate, imread, attempt_read_threshold, read_threshold_shm, write_shm_to_tiff
+from .utils import find_all_images_in_dir, interpolate, imread, attempt_read_threshold, read_threshold_shm, write_shm_to_tiff, imsave
 from .filter_utils import normalize_flat, gaussian_filter
 
 from live_destriper.logger import get_logger, get_default_logger
@@ -217,6 +217,29 @@ class Destriper:
             retvals.append((arrs_to_torch(imgs), args_chunk))
 
         return retvals
+
+    def torch_imwrite(self, imgs_chunk, args_chunk):
+        """
+        Write a batch of images to disk using the TIFF format. ONly for when not using shared memory
+
+        Args:
+            imgs_chunk (torch.Tensor): Batch of images to be written.
+            args_chunk (list): List of arguments for each image in the batch.
+
+
+        Returns:
+            None
+        """
+        images = imgs_chunk.numpy()
+        if images.dtype == np.int16:
+            images.dtype = np.uint16
+            
+        img_and_paths = zip(images, [args['output_path'] for args in args_chunk])
+        
+        for img_and_path in img_and_paths:
+            imgarr, imgpath = img_and_path
+            out_path = str(imgpath)
+            imsave(out_path, imgarr, compression=self.compression, output_format=self.output_format, rotate_and_flip=True, extra_rotate_and_flip = self.rotate_and_flip)
 
     @staticmethod
     def offsign16_to_32(int16_tensor):
@@ -417,90 +440,124 @@ class Destriper:
 
         print('Pystripe batch processing progress:')
         load_args = list(mit.chunked_even(args, self.ram_loadsize))
+
+
+        if self.use_shared_memory:
         
-        # base names for the SHM objects in this folder
-        img_sham_name = DESTRIPE_SHM_NAME# + f"_{str(self.input_path)}"
-        thresh_sham_name = THRESHOLD_SHM_NAME #+ f"_{str(self.input_path)}"
-        destriped_imgs_shm_name = DESTRIPE_WRITE_SHM_NAME #+ f"_{str(self.input_path)}"
+            # base names for the SHM objects in this folder
+            img_sham_name = DESTRIPE_SHM_NAME# + f"_{str(self.input_path)}"
+            thresh_sham_name = THRESHOLD_SHM_NAME #+ f"_{str(self.input_path)}"
+            destriped_imgs_shm_name = DESTRIPE_WRITE_SHM_NAME #+ f"_{str(self.input_path)}"
 
-        batch_counter = 0
-        with tqdm.tqdm(total=(len(args)), ascii=True, bar_format=None) as pbar:
-            for load_batch in load_args:
-                start = time.time()
-                # Get the 3D image shape of the load batch (in z)
-                img_shape = (len(load_batch),*img_size)
+            batch_counter = 0
+            with tqdm.tqdm(total=(len(args)), ascii=True, bar_format=None) as pbar:
+                for load_batch in load_args:
+                    start = time.time()
+                    # Get the 3D image shape of the load batch (in z)
+                    img_shape = (len(load_batch),*img_size)
 
-                # The shared memory object to store the destriped images
-                destriped_imgs_shm = SharedMemory(create=True, size=int(img_shape[0]*img_shape[1]*img_shape[2] * img_dtype.itemsize),
-                                                    name=destriped_imgs_shm_name+f"_{batch_counter}")
-                atexit.register(cleanup_shared_memory, destriped_imgs_shm_name+f"_{batch_counter}") # make sure it gets deleted on exit
-                img_sham = SharedMemory(create=True, size=int(img_shape[0]*img_shape[1]*img_shape[2]* img_dtype.itemsize),
-                                        name=img_sham_name+f"_{batch_counter}")
-                atexit.register(cleanup_shared_memory, img_sham_name+f"_{batch_counter}")
-                thresh_sham = SharedMemory(create=True, size=len(load_batch) * np.dtype(np.float32).itemsize,
-                                        name=thresh_sham_name+"_{}".format(batch_counter))
-                atexit.register(cleanup_shared_memory, thresh_sham_name+f"_{batch_counter}")
-                shared_array = np.ndarray(img_shape, dtype=img_dtype, buffer=destriped_imgs_shm.buf)
-                chunked = self.prepare_batch(load_batch, img_dtype = img_dtype, img_shape = img_shape, img_sham=img_sham, thresh_sham=thresh_sham)
-                self.logger.info('Batch %d: %d images loaded in %0.2f seconds'%(batch_counter, len(load_batch), time.time() - start))
+                    # The shared memory object to store the destriped images
+                    destriped_imgs_shm = SharedMemory(create=True, size=int(img_shape[0]*img_shape[1]*img_shape[2] * img_dtype.itemsize),
+                                                        name=destriped_imgs_shm_name+f"_{batch_counter}")
+                    atexit.register(cleanup_shared_memory, destriped_imgs_shm_name+f"_{batch_counter}") # make sure it gets deleted on exit
+                    img_sham = SharedMemory(create=True, size=int(img_shape[0]*img_shape[1]*img_shape[2]* img_dtype.itemsize),
+                                            name=img_sham_name+f"_{batch_counter}")
+                    atexit.register(cleanup_shared_memory, img_sham_name+f"_{batch_counter}")
+                    thresh_sham = SharedMemory(create=True, size=len(load_batch) * np.dtype(np.float32).itemsize,
+                                            name=thresh_sham_name+"_{}".format(batch_counter))
+                    atexit.register(cleanup_shared_memory, thresh_sham_name+f"_{batch_counter}")
+                    shared_array = np.ndarray(img_shape, dtype=img_dtype, buffer=destriped_imgs_shm.buf)
+                    chunked = self.prepare_batch(load_batch, img_dtype = img_dtype, img_shape = img_shape, img_sham=img_sham, thresh_sham=thresh_sham)
+                    self.logger.info('Batch %d: %d images loaded in %0.2f seconds'%(batch_counter, len(load_batch), time.time() - start))
 
-                num_images_counter = 0 # total number of images that have been destriped so far for this batch
-                last_imgs_chunk_numpy = None
-                for imgs_chunk, args_chunk in chunked:
-                    imgs_chunk = imgs_chunk.to(device='cuda', non_blocking=False)
-                    images32 = self.offsign16_to_32(imgs_chunk)
-                    imgs_chunk32 = self.destripe_torch32(images32, args_chunk)
+                    num_images_counter = 0 # total number of images that have been destriped so far for this batch
+                    last_imgs_chunk_numpy = None
+                    for imgs_chunk, args_chunk in chunked:
+                        imgs_chunk = imgs_chunk.to(device='cuda', non_blocking=False)
+                        images32 = self.offsign16_to_32(imgs_chunk)
+                        imgs_chunk32 = self.destripe_torch32(images32, args_chunk)
 
-                    imgs_chunk = imgs_chunk32.to(device='cpu', dtype=torch.int16, non_blocking=True)
-                    imgs_chunk_numpy = imgs_chunk.numpy()
-                    if imgs_chunk_numpy.dtype == np.int16:
-                        imgs_chunk_numpy.dtype = np.uint16
+                        imgs_chunk = imgs_chunk32.to(device='cpu', dtype=torch.int16, non_blocking=True)
+                        imgs_chunk_numpy = imgs_chunk.numpy()
+                        if imgs_chunk_numpy.dtype == np.int16:
+                            imgs_chunk_numpy.dtype = np.uint16
 
-                    torch.cuda.synchronize()
-                    if last_imgs_chunk_numpy is not None:
-                        try:
-                            # If we try to save it right away with non-blocking, there will be a racing condition in writing data
-                            shared_array[num_images_counter:num_images_counter + len(last_imgs_chunk_numpy)] = last_imgs_chunk_numpy
-                            
-                        except Exception as e:
-                            self.logger.error(f"Error in writing to shared memory: {e}")
-                            raise Exception("Error in writing to shared memory")
-                        # Update the number of images that have been destriped so we know where in the array to save it
-                        num_images_counter += len(last_imgs_chunk_numpy)
+                        torch.cuda.synchronize()
+                        if last_imgs_chunk_numpy is not None:
+                            try:
+                                # If we try to save it right away with non-blocking, there will be a racing condition in writing data
+                                shared_array[num_images_counter:num_images_counter + len(last_imgs_chunk_numpy)] = last_imgs_chunk_numpy
+                                
+                            except Exception as e:
+                                self.logger.error(f"Error in writing to shared memory: {e}")
+                                raise Exception("Error in writing to shared memory")
+                            # Update the number of images that have been destriped so we know where in the array to save it
+                            num_images_counter += len(last_imgs_chunk_numpy)
 
-                    # Update the next batch of images to be written to shared memory
-                    last_imgs_chunk_numpy = imgs_chunk_numpy
+                        # Update the next batch of images to be written to shared memory
+                        last_imgs_chunk_numpy = imgs_chunk_numpy
 
-                    # Update progress bar
-                    pbar.update(len(imgs_chunk))
+                        # Update progress bar
+                        pbar.update(len(imgs_chunk))
+                    
+                    # After the for loop we need to write the last chunk of images to shared memory
+                    shared_array[num_images_counter:num_images_counter + len(last_imgs_chunk_numpy)] = last_imgs_chunk_numpy                            
+
+                    # Write images to disk from shared memory
+                    output_paths = [args['output_path'] \
+                                    for args2 in [args_chunk for _, args_chunk in chunked] \
+                                    for args in args2]
+                    write_shm_to_tiff(output_paths, 
+                                    destriped_imgs_shm, 
+                                    img_shape, 
+                                    img_dtype, 
+                                    self.output_format, 
+                                    self.compression, 
+                                    rotate_and_flip = self.rotate_and_flip,
+                                    extra_rotate_and_flip = self.extra_rotate_and_flip, 
+                                    num_workers = self.num_workers)
                 
-                # After the for loop we need to write the last chunk of images to shared memory
-                shared_array[num_images_counter:num_images_counter + len(last_imgs_chunk_numpy)] = last_imgs_chunk_numpy                            
+                    # Close and unlink the shared memory
+                    destriped_imgs_shm.close()
+                    destriped_imgs_shm.unlink()
+                    img_sham.close()
+                    img_sham.unlink()
+                    thresh_sham.close()
+                    thresh_sham.unlink()
 
-                # Write images to disk from shared memory
-                output_paths = [args['output_path'] \
-                                for args2 in [args_chunk for _, args_chunk in chunked] \
-                                for args in args2]
-                write_shm_to_tiff(output_paths, 
-                                destriped_imgs_shm, 
-                                img_shape, 
-                                img_dtype, 
-                                self.output_format, 
-                                self.compression, 
-                                rotate_and_flip = self.rotate_and_flip,
-                                extra_rotate_and_flip = self.extra_rotate_and_flip, 
-                                num_workers = self.num_workers)
+                    # update counter
+                    batch_counter += 1
+        else:
+            # Don't use shared memory
+            batch_counter = 0
+            chunk_counter = 0
+
+            with tqdm.tqdm(total=(len(args)), ascii=True, bar_format=None) as pbar:
+                for load_batch in load_args:
+                    chunked = self.prepare_batch(load_batch)
+                        
+                    last_args_chunk = None
+                    last_imgs_chunk = None
+                    for imgs_chunk, args_chunk in chunked:
+                        imgs_chunk = imgs_chunk.to(device='cuda', non_blocking=False)
+                        images32 = self.offsign16_to_32(imgs_chunk)
+                        imgs_chunk32 = self.destripe_torch32(images32, args_chunk)
+
+                        imgs_chunk = imgs_chunk32.to(device='cpu', dtype=torch.int16, non_blocking=True)
+
+                        if last_imgs_chunk is not None:
+                            torch.cuda.synchronize()
+                            self.torch_imwrite(last_imgs_chunk, last_args_chunk)
+                            pbar.update(len(last_args_chunk))
+
+                        last_imgs_chunk = imgs_chunk
+                        last_args_chunk = args_chunk
+                        chunk_counter += 1
+                    else:
+                        self.torch_imwrite(last_imgs_chunk, last_args_chunk)
+                        pbar.update(len(last_args_chunk))
+                    batch_counter += 1
             
-                # Close and unlink the shared memory
-                destriped_imgs_shm.close()
-                destriped_imgs_shm.unlink()
-                img_sham.close()
-                img_sham.unlink()
-                thresh_sham.close()
-                thresh_sham.unlink()
-
-                # update counter
-                batch_counter += 1
 
         # Interpolate images that could not be opened
         if os.path.exists(error_path):
@@ -546,6 +603,7 @@ def _parse_args(raw_args=None):
     parser.add_argument('--log-path',type=str,required=False, default=None, help="path to the logs for postprocessing")
     parser.add_argument('--rotate-and-flip', action="store_true")
     parser.add_argument('--extra-rotate-and-flip', action="store_true")
+    parser.add_argument("--use-shared-memory", action="store_true")
     args = parser.parse_args(raw_args)
     return args
 
@@ -613,7 +671,8 @@ def main(raw_args=None):
                         output_format=output_format,
                         logger = logger,
                         rotate_and_flip = args.rotate_and_flip,
-                        extra_rotate_and_flip = args.extra_rotate_and_flip
+                        extra_rotate_and_flip = args.extra_rotate_and_flip,
+                        use_shared_memory = args.use_shared_memory
                         )
     destriper.batch_filter()
 

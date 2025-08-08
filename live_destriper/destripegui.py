@@ -28,6 +28,7 @@ def parse_args(raw_args=None):
     parser.add_argument("--gpu-chunksize", help="Number of images to destripe at once in the GPU (Default: None, infer from available vRAM)", type=int, default=None)
     parser.add_argument('--log-path',type=str,required=False, default=None, help="path to the logs for postprocessing")
     parser.add_argument("--use-gpu", action="store_true", help="Whether to use GPU or not when destriping")
+    parser.add_argument("--use-shared-memory", action="store_true", help="If this flag exists, then use shared memroy for faster reading/writing")
 
     # Options unique to live destriping
     parser.add_argument("--check-corrupt", action="store_true", help="Whether to check for corrupt images after a stack is finished destriping.")
@@ -66,7 +67,8 @@ def run_pystripe(input_path,
                  rotate_and_flip = False,
                  extra_rotate_and_flip = False,
                  log_path = None,
-                 check_corrupt = False):
+                 check_corrupt = False,
+                 use_shared_memory = False):
     if use_gpu:
         print("Using GPU Destriper")
         from live_destriper.destripe.core_gpu import main as gpu_destripe
@@ -88,6 +90,8 @@ def run_pystripe(input_path,
             cmd.append("--rotate-and-flip")
         if extra_rotate_and_flip:
             cmd.append("--extra-rotate-and-flip")
+        if use_shared_memory:
+            cmd.append("--use-shared-memory")
         print(cmd)
         
         gpu_destripe(cmd)        
@@ -119,7 +123,8 @@ def run_pystripe(input_path,
                      rotate_and_flip = rotate_and_flip,
                      extra_rotate_and_flip = extra_rotate_and_flip,
                      log_path = log_path,
-                     check_corrupt = check_corrupt)
+                     check_corrupt = check_corrupt,
+                     use_shared_memory = use_shared_memory)
         
 
 def get_metadata(input_path):
@@ -382,7 +387,7 @@ def main():
 
     # we also want to write to a destripe_folder_list.txt to keep track of the un-destriped stacks in case this fails. Then, the normal destriping can
     # take care of this
-    destripe_list_path = destriped_dir / "destripe_folder_list.txt"
+    destripe_list_path = destriped_dir / "destriped_folder_list.txt"
     if not destripe_list_path.exists():
         tiles = count_tiles(raw_dir, destriped_dir, metadata, metadata_version)
         if spim_type == "SmartSPIM":
@@ -403,6 +408,7 @@ def main():
             "extra_rotate_and_flip": extra_rotate_and_flip,
             "log_path": log_path,
             "check_corrupt": args.check_corrupt,
+            "use_shared_memory" : args.use_shared_memory
         }
 
 
