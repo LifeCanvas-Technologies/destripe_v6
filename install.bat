@@ -1,5 +1,6 @@
 @echo off
-if %cd% neq C:\Windows\System32 (
+echo %cd%
+if %cd% neq C:\Windows\system32 (
 	echo You need to run this installer as an Administrator
 	pause
 	exit

@@ -1,4 +1,4 @@
-import os, sys, time, csv, re, json
+import os, sys, time, csv, re, json, queue, threading
 import math
 import multiprocessing
 import configparser
@@ -17,8 +17,11 @@ from pprint import pprint
 import math
 from tabulate import tabulate
 from PIL import Image
+import tkinter as tk
+from tkinter import ttk
 
 from destripegui.destripe.core import main as cpu_destripe
+from destripegui.destripe.core_gpu import main as gpu_destripe
 from destripegui.destripe.utils import find_all_images
 from destripegui.destripe import supported_extensions
 
@@ -37,7 +40,14 @@ def check_for_bad_images(path):
     print('\nChecking for corrupt files...')
     count = 0
     start = datetime.now()
+    gui['tile_progress_label'].config(text='Checking for Corrupt Images...')
+    n = len(os.listdir(path))
+    i = 0
     for filename in tqdm(os.listdir(path)):
+        i += 1
+        pct = i/n*100
+        gui['tile_progress_text'].config(text='{}/{} images'.format(i, n))
+        gui['tile_progress'].config(value=pct)
         # print('img path: {}'.format(os.path.join(path, filename)))
         try:
             img = Image.open(os.path.join(path, filename))
@@ -47,19 +57,18 @@ def check_for_bad_images(path):
         except:
             print("Bad file: {}".format(filename))
             count += 1
+        
     time = datetime.now() - start
     print("{} corrupt files found.".format(count, time.seconds))
+    
+
+
     return count
     
 
 def run_pystripe(input_path, output_path, current_dir):
-    # print('test')
-    # input_path = Path(dir['path'])
-    # output_path = Path(dir['output_path'])
     sig_strs = current_dir['metadata']['sample metadata']['destripe'].split('/')
     sigma = list(int(sig_str) for sig_str in sig_strs)
-
-    # sigma = [256, 0]
     workers = int(configs['workers'])
     chunks = int(configs['chunks'])
     use_gpu = int(configs["use_gpu"])
@@ -69,8 +78,6 @@ def run_pystripe(input_path, output_path, current_dir):
 
     contents = os.listdir(input_path)
     if len(contents) == 1:
-        # input_path = os.path.join(input_path, contents[0])
-        # output_path = os.path.join(output_path, contents[0])
         use_gpu = 0
 
     if 'MIP' in input_path:
@@ -78,7 +85,6 @@ def run_pystripe(input_path, output_path, current_dir):
 
     if use_gpu:
         print("Using GPU Destriper")
-        from destripegui.destripe.core_gpu import main as gpu_destripe
         cmd = ["-i", str(input_path),
                         "-o", str(output_path), 
                         "--sigma1", str(sigma[0]),
@@ -91,7 +97,7 @@ def run_pystripe(input_path, output_path, current_dir):
             cmd.append(str(ram_loadsize))
         print(cmd)
         
-        gpu_destripe(cmd)        
+        gpu_destripe(gui, root, current_dir['count'], cmd)
 
     else:
         print("Using CPU Destriper")
@@ -100,7 +106,11 @@ def run_pystripe(input_path, output_path, current_dir):
                         "--sigma1", str(sigma[0]),
                         "--sigma2", str(sigma[1]),
                         "--workers", str(workers),
-                        "--chunks", str(chunks)])
+                        "--chunks", str(chunks)],
+                        gui,
+                        root,
+                        current_dir['count']
+                        )
     
     if 'MIP' in input_path or not configs['check_corrupt']:
         return
@@ -116,6 +126,28 @@ def get_metadata(dir):
     with open(metadata_path, 'r') as f:
         metadata = json.load(f)
         dir['metadata'] = metadata
+
+    text = dir['path']
+    text_list = text.split("\\")
+    dt = datetime.strptime(text_list[3][:17], "%Y%m%d_%H_%M_%S")
+    date = dt.strftime("%m/%d/%Y")
+    time = dt.strftime("%H:%M:%S")
+    name = text_list[3][18:]
+    obj = metadata['sample metadata']['objective']
+    immersion = metadata['sample metadata']['immersion']
+    lasers = ''
+    x_tiles = []
+    y_tiles = []
+    for tile in metadata['tiles']:
+        if tile['X'] not in x_tiles:
+            x_tiles.append(tile['X'])
+        if tile['Y'] not in y_tiles:
+            y_tiles.append(tile['Y'])
+        if tile['Laser'] not in lasers:
+            lasers += '|{}'.format(tile['Laser'])
+    lasers = lasers[1:]
+    tiles = '{}x{}'.format(len(x_tiles), len(y_tiles))
+    dir['display_data'] = [date, time, name, obj, immersion, lasers, tiles]
 
 def pair_key_value_lists(keys, values):
     # utility function for building metadata dict
@@ -285,6 +317,14 @@ def count_tiles(dir):
     dir['tiles'] = tiles
 
 def show_output(ac_dirs, current_dir):
+    for i in gui['current_tree'].get_children():
+        gui['current_tree'].delete(i)
+    gui['current_tree'].insert("", tk.END, values=(current_dir['display_data']))
+
+    # print('metadata:')
+    # print(current_dir['metadata'])
+
+
     headers = ['Tile', 'Images Expected', 'Images on Acquisition Drive', 'Images on Stitch Drive']
     data = []
     total_images = 0
@@ -298,16 +338,24 @@ def show_output(ac_dirs, current_dir):
             tile['input_images'],
             tile['output_images']
         ])
+    current_dir['count'] = {'total': total_images, 'destriped': total_destriped}
     print('Current Acquisition: {}\n'.format(current_dir['path']))
+
     print(tabulate(data, headers))
     pct = total_destriped / total_images
     bar_length = 72
     print('\nOVERALL DESTRIPING PROGRESS: {:.0%} [{}{}]'.format(pct, '#'*round(pct*bar_length), '-'*round((1-pct)*bar_length)))
+    gui['acq_progress'].config(value=pct*100)
+    gui['acq_progress_text'].config(text='{}/{} images'.format(total_destriped, total_images))
+
 
     if len(ac_dirs) > 1:
         print('\nAdditional Acquisitions in Destriping Queue:')
+        for i in gui['queue_tree'].get_children():
+            gui['queue_tree'].delete(i)
         for i in range(1, len(ac_dirs)):
             print(ac_dirs[i]['path'])
+            gui['queue_tree'].insert("", tk.END, values=(ac_dirs[i]['display_data']))
     
 def check_mips(current_dir):
     for item in os.listdir(current_dir['path']):
@@ -344,6 +392,15 @@ def finish_directory(dir):
     # x = input('about to rename...')
     append_folder_name(dir, 'in', configs['input_done'])
     append_folder_name(dir, 'out', configs['output_done'])
+
+    gui['done_tree'].insert("", tk.END, values=(dir['display_data']))
+    for i in gui['current_tree'].get_children():
+        gui['current_tree'].delete(i)
+    gui['acq_progress'].config(value=0)
+    gui['acq_progress_text'].config(text='')
+    gui['tile_progress'].config(value=0)
+    gui['tile_progress_label'].config(text='')
+    gui['tile_progress_text'].config(text='')
 
     # log(' finishing {}'.format(dir['path']), True)
 
@@ -493,74 +550,195 @@ def time_stamp_finish(current_dir):
         f.write(timer_text)
 
 def search_loop():
-    while True:
-        print('\n-------------\n\n')
-        ac_dirs = get_acquisition_dirs()
+    print('\n-------------\n\n')
+    ac_dirs = get_acquisition_dirs()
 
-        if len(ac_dirs) == 0:
-            print("Waiting for new acquisitions...")
-            time.sleep(5)
-            continue
-        if len(ac_dirs) > 0:
-            current_dir = ac_dirs[0]
-            count_tiles(current_dir)
-            
-            show_output(ac_dirs, current_dir)
-            if configs['safe_mode']:
-                x = input('Press Enter to exit program...')
-                exit()
+    if len(ac_dirs) == 0:
+        print("Waiting for new acquisitions...")
+        return
 
-            finished = True
+    if len(ac_dirs) > 0:
+        current_dir = ac_dirs[0]
+        count_tiles(current_dir)
+        
+        show_output(ac_dirs, current_dir)
+        if configs['safe_mode']:
+            x = input('Press Enter to exit program...')
+            exit()
+
+        finished = True
+        for tile in current_dir['tiles']:
+            if tile['output_images'] < tile['expected']:
+                finished = False
+        if finished:
+
+            print('\nAll tiles have been destriped.  Checking for Maximum Intensity Projections...')
+            check_mips(current_dir)
+            finish_directory(current_dir)
+            return
+
+        destripe_tile = False
+        waiting_tile = False
+
+        for tile in current_dir['tiles']:
+            if tile['input_images'] >= tile['expected'] and tile['output_images'] < tile['expected']:
+                destripe_tile = tile['path']
+                break
+
+        if not destripe_tile:
             for tile in current_dir['tiles']:
-                if tile['output_images'] < tile['expected']:
-                    finished = False
-            if finished:
-                print('\nAll tiles have been destriped.  Checking for Maximum Intensity Projections...')
-                check_mips(current_dir)
-                finish_directory(current_dir)
-                continue
+                if tile['input_images'] > 0 and tile['output_images'] == 0:
+                    waiting_tile = tile
+                    break 
+        
+        if destripe_tile:
+            input_path = os.path.join(current_dir['path'], destripe_tile)
+            output_path = os.path.join(current_dir['output_path'], destripe_tile)
+            if configs['time_stamp']:
+                time_stamp_start(current_dir)
+            print('\nDestriping {}...\n'.format(destripe_tile))
+            time.sleep(1)
+            run_pystripe(input_path, output_path, current_dir)
+            return
 
-            destripe_tile = False
-            waiting_tile = False
-
-            for tile in current_dir['tiles']:
-                if tile['input_images'] >= tile['expected'] and tile['output_images'] < tile['expected']:
-                    destripe_tile = tile['path']
-                    break
-
-            if not destripe_tile:
-                for tile in current_dir['tiles']:
-                    if tile['input_images'] > 0 and tile['output_images'] == 0:
-                        waiting_tile = tile
-                        break 
-            
-            if destripe_tile:
-                input_path = os.path.join(current_dir['path'], destripe_tile)
-                output_path = os.path.join(current_dir['output_path'], destripe_tile)
-                if configs['time_stamp']:
-                    time_stamp_start(current_dir)
-                print('\nDestriping {}...\n'.format(destripe_tile))
-                time.sleep(1)
-                run_pystripe(input_path, output_path, current_dir)
-
-            elif waiting_tile:
-                print('\nWaiting for current tile: {} to finish being acquired...'.format(waiting_tile['path']))
-                if configs['stall_counter'][0] == waiting_tile['path'] and configs['stall_counter'][1] == waiting_tile['input_images']:
-                    configs['stall_counter'][2] += 1
-                else:
-                    configs['stall_counter'][0] = waiting_tile['path']
-                    configs['stall_counter'][1] = waiting_tile['input_images']
-                    configs['stall_counter'][2] = 0
-
-                if configs['stall_limit'] and configs['stall_counter'][2] > int(configs['stall_limit']):
-                    x = input('\nThis acquisition ({}) seems to be incomplete.  Mark as aborted (y/n)?\n'.format(current_dir['path']))
-                    if x in 'yesYesyeahsure':
-                        abort(current_dir)
-                        continue
-                time.sleep(5)
-
+        elif waiting_tile:
+            print('\nWaiting for current tile: {} to finish being acquired...'.format(waiting_tile['path']))
+            if configs['stall_counter'][0] == waiting_tile['path'] and configs['stall_counter'][1] == waiting_tile['input_images']:
+                configs['stall_counter'][2] += 1
             else:
-                time.sleep(5)
+                configs['stall_counter'][0] = waiting_tile['path']
+                configs['stall_counter'][1] = waiting_tile['input_images']
+                configs['stall_counter'][2] = 0
+
+            if configs['stall_limit'] and configs['stall_counter'][2] > int(configs['stall_limit']):
+                x = input('\nThis acquisition ({}) seems to be incomplete.  Mark as aborted (y/n)?\n'.format(current_dir['path']))
+                if x in 'yesYesyeahsure':
+                    abort(current_dir)
+                    return
+        return
+    return
+
+def run_search_thread():
+    threads = threading.enumerate()
+    running = False
+    for t in threads:
+        # print('Thread name: {}'.format(t.name))
+        if 'search_loop' in t.name:
+            # print('search_loop is running')
+            running = True
+    if running == False:
+        # print('running search loop')
+        thread = threading.Thread(target=search_loop, daemon=True)
+        thread.start()
+
+    # number_of_threads = threading.active_count()
+    # print('number of threads: {}'.format(number_of_threads))
+    # if number_of_threads < 2:
+    #     print('running search loop')
+    #     thread = threading.Thread(target=search_loop, daemon=True)
+    #     thread.start()
+    root.after(1000, run_search_thread)
+
+def build_gui():
+    gui['current'] = tk.Frame(root)
+    gui['queue'] = tk.Frame(root)
+    gui['done'] = tk.Frame(root)
+    gui['acq'] = tk.Frame(root)
+    gui['tile'] = tk.Frame(root)
+
+    gui['current_label'] = tk.Label(root, text="Current Acquisition", anchor='w')
+    gui['queue_label'] = tk.Label(root, text="Acquisition Queue", anchor='w')
+    gui['done_label'] = tk.Label(root, text="Destriped Acquisitions", anchor='w')
+    
+    for name in ['current', 'queue', 'done']:
+        tree_name = '{}_tree'.format(name)
+        gui[tree_name] = ttk.Treeview(gui[name], selectmode="none", height=1, show='headings')
+        gui[tree_name]["columns"] = ("date", "time", 'name', 'objective', 'immersion', 'wavelengths', 'tiles')
+        for column_name in gui[tree_name]['columns']:
+            gui[tree_name].column(column_name, anchor='w', width=100)
+            gui[tree_name].heading(column_name, anchor='w', text=column_name.capitalize())
+        gui[tree_name].column('name', width=300)
+        gui[tree_name].pack(side='left')
+        if name != 'current':
+            gui[tree_name].config(height=5)
+            scroll_name = '{}_scroll'.format(name)
+            gui[scroll_name] = ttk.Scrollbar(gui[name], orient='vertical', command=gui[tree_name].yview)
+            gui[tree_name].config(yscrollcommand=gui[scroll_name].set)
+            gui[scroll_name].pack(side='left', fill='y')
+
+    # gui['queue_tree'].config(height=5)
+    # gui['queue_scroll'] = ttk.Scrollbar(root, orient='vertical', command=gui['queue_tree'].yview)
+    # gui['queue_tree'].config(yscrollcommand=gui['queue_scroll'].set)
+
+    # gui['done_tree'].config(height=5)
+    # gui['done_scroll'] = ttk.Scrollbar(root, orient='vertical', command=gui['done_tree'].yview)
+    # gui['done_tree'].config(yscrollcommand=gui['done_scroll'].set)
+        
+        # gui[name].column("date", anchor="w", width=100)
+        # gui[name].column("time", anchor="w", width=100)
+        # gui[name].column("name", anchor="w", width=100)
+        # gui[name].column("objective", anchor="w", width=100)
+        # gui[name].column("immersion", anchor="w", width=100)
+        # gui[name].column("wavelengths", anchor="w", width=100)
+        # gui[name].column("tiles", anchor="w", width=100)
+
+        # gui['current_tree'].heading("date", anchor="w", text="Date")
+        # gui['current_tree'].heading("time", anchor="w", text="Time")
+        # gui['current_tree'].heading("name", anchor="w", text="Name")
+        # gui['current_tree'].heading("objective", anchor="w", text="Objective")
+        # gui['current_tree'].heading("immersion", anchor="w", text="Immersion")
+        # gui['current_tree'].heading("wavelengths", anchor="w", text="Wavelengths")
+        # gui['current_tree'].heading("tiles", anchor="w", text="Tiles")
+
+    # gui['status_label'] = tk.Label(root, text="Current Status:")
+    # gui['status'] = tk.Label(root, text='')
+
+    gui['acq_progress_label'] = tk.Label(gui['acq'], width=26, text="Total Progress", anchor='w')
+    gui['acq_progress_text'] = tk.Label(gui['acq'], width=15, text='', anchor='e')
+    gui['acq_progress'] = ttk.Progressbar(gui['acq'], length=600, value=0)
+    gui['acq_progress_label'].pack(side='left')
+    gui['acq_progress_text'].pack(side='left')
+    gui['acq_progress'].pack(side='left')
+
+    gui['tile_progress_label'] = tk.Label(gui['tile'], width=26, text="Current Task", anchor='w')
+    gui['tile_progress_text'] = tk.Label(gui['tile'], width=15, text='', anchor='e')
+    gui['tile_progress'] = ttk.Progressbar(gui['tile'], length=600, value=0)
+    gui['tile_progress_label'].pack(side='left')
+    gui['tile_progress_text'].pack(side='left')
+    gui['tile_progress'].pack(side='left')
+
+    gui['current_label'].pack(anchor='w', padx=5, pady=(5,0))
+    gui['current'].pack(anchor='w', padx=5, pady=(5,0))
+    gui['acq'].pack(anchor='w', padx=5, pady=(10,0))
+    gui['tile'].pack(anchor='w', padx=5, pady=(5,0))
+    gui['queue_label'].pack(anchor='w', padx=5, pady=(40,0))
+    gui['queue'].pack(anchor='w', padx=5, pady=(5,0))
+    gui['done_label'].pack(anchor='w', padx=5, pady=(40,0))
+    gui['done'].pack(anchor='w', padx=5, pady=(5,0))
+
+
+
+    # gui['current_label'].pack()
+
+    # root.columnconfigure(0, minsize=200)
+    # gui['current_label'].grid(row=0, column=0, columnspan=3, padx=5, sticky='w')
+    # gui['current_tree'].grid(row=1, column=0, columnspan=3, padx=5, pady=5, sticky='w')
+    # # gui['status_label'].grid(row=2, column=0, padx=5, pady=5, sticky='w')
+    # # gui['status'].grid(row=2, column=1, padx=5, pady=5, sticky='w')
+    # gui['acq_progress_label'].grid(row=2, column=0, padx=5, pady=5, sticky='w')
+    # gui['acq_progress_text'].grid(row=2, column=1, padx=5, pady=5, sticky='e')
+    # gui['acq_progress'].grid(row=2, column=2, padx=5, pady=5, sticky='w')
+
+    # gui['tile_progress_label'].grid(row=3, column=0, padx=5, pady=5, sticky='w')
+    # gui['tile_progress_text'].grid(row=3, column=1, padx=5, pady=5, sticky='e')
+    # gui['tile_progress'].grid(row=3, column=2, padx=5, pady=5, sticky='w')
+
+    # gui['queue_label'].grid(row=4, column=0, columnspan=3, padx=5, pady=(40,0), sticky='w')
+    # gui['queue_tree'].grid(row=5, column=0, columnspan=3, padx=5, pady=5, sticky='w')
+
+    # gui['done_label'].grid(row=6, column=0, columnspan=3, padx=5, sticky='w')
+    # gui['done_tree'].grid(row=7, column=0, columnspan=3, padx=5, pady=5, sticky='w')  
+
 
 def main():
     # print('testing')
@@ -572,7 +750,8 @@ def main():
             print('Another instance of destripegui is already running')
             exit(1)
 
-    global configs
+    global configs, root, gui
+    gui = {}
     
     print('Reading config file...\n')
 
@@ -614,7 +793,15 @@ def main():
         main()
     
     print('\nScanning {} for new acquisitions...\n'.format(configs['input_dir']))
-    search_loop()
+    
+    root = tk.Tk()
+    root.title("Destripe GUI")
+    build_gui()
+    root.after(1000, run_search_thread)
+    root.mainloop()
+
+
+    # search_loop()
     
 
 if __name__ == "__main__":

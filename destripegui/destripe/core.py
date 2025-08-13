@@ -9,7 +9,7 @@ import tifffile
 import imageio as iio
 import pywt
 import multiprocessing
-import tqdm
+from tqdm.tk import tqdm
 from dcimg import DCIMGFile
 from . import raw
 import warnings
@@ -685,7 +685,7 @@ def _find_all_images(search_path, input_path, output_path, zstep=None):
     return img_paths
 
 
-def batch_filter(input_path, output_path, workers, chunks, sigma, level=0, wavelet='db3', crossover=10,
+def batch_filter(gui, root, count, input_path, output_path, workers, chunks, sigma, level=0, wavelet='db3', crossover=10,
                  threshold=-1, compression=1, flat=None, dark=0, zstep=None, rotate=False,
                  lightsheet=False,
                  artifact_length=150,
@@ -695,8 +695,7 @@ def batch_filter(input_path, output_path, workers, chunks, sigma, level=0, wavel
                  dont_convert_16bit=False,
                  output_format=None,
                  progress_dialog = None,
-                 step_bounds = None
-                 ):
+                 step_bounds = None):
     """Applies `streak_filter` to all images in `input_path` and write the results to `output_path`.
 
     Parameters
@@ -801,8 +800,28 @@ def batch_filter(input_path, output_path, workers, chunks, sigma, level=0, wavel
         }
         args.append(arg_dict)
     print('Pystripe batch processing progress:')
+
+    i = 0
+    n = len(args)
+    if 'MIP' in str(input_path):
+        gui['tile_progress_label'].config(text='Destriping MIPs...')
+    else:
+        gui['tile_progress_label'].config(text='Destriping...')
+    gui['tile_progress_text'].config(text='0/{} images'.format(n))
+    gui['tile_progress'].config(value=0)
     with multiprocessing.Pool(workers) as pool:
-        list(tqdm.tqdm(pool.imap(_read_filter_save, args, chunksize=chunks), total=len(args), ascii=True))
+        for result in pool.imap(_read_filter_save, args, chunksize=chunks):
+            i += 1
+            pct = i/n*100
+            total_destriped = count['destriped'] + i
+            total = count['total']
+            total_pct = total_destriped / total * 100
+            gui['tile_progress_text'].config(text='{}/{} images'.format(i, n))
+            gui['tile_progress'].config(value=pct)
+            if 'MIP' not in str(input_path):
+                gui['acq_progress_text'].config(text='{}/{} images'.format(total_destriped, total))
+                gui['acq_progress'].config(value=total_pct)
+            
     
     print('Done!')
 
@@ -892,11 +911,13 @@ def interpolate(image_path, input_path, output_path):
         pass
 
 
-def main(raw_args=None):
+def main(raw_args, gui, root, count):
     """
     Can run from command line. Progress dialog is the QProgressDialog used to track progress. 
     max_step: the max percentage to scale the progress bar by. 
     """
+
+    # gui['status'].config(text='destriping')
     args = _parse_args(raw_args)
     sigma = [args.sigma1, args.sigma2]
     input_path = Path(args.input)
@@ -956,7 +977,10 @@ def main(raw_args=None):
         else:
             output_path = Path(args.output)
             assert output_path.suffix == ''
-        batch_filter(input_path,
+        batch_filter(gui,
+                     root,
+                     count,
+                     input_path,
                      output_path,
                      workers=args.workers,
                      chunks=args.chunks,
@@ -977,7 +1001,7 @@ def main(raw_args=None):
                      percentile=args.percentile,
                      lightsheet_vs_background=args.lightsheet_vs_background,
                      dont_convert_16bit=args.dont_convert_16bit,
-                     output_format=args.output_format
+                     output_format=args.output_format,
                      )
     else:
         print('Cannot find input file or directory. Exiting...')

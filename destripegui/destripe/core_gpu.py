@@ -585,61 +585,34 @@ class Destriper:
         chunk_counter = 0
 
         with tqdm.tqdm(total=(len(args)), ascii=True, bar_format=None) as pbar:
-
             for load_batch in load_args:
                 # print('Loading batch #{}'.format(batch_counter))
                 if True:#with multiprocessing.Pool(processes=16) as p:
                     def torch_imwrite3( imgs_chunk, args_chunk):
                         """
                         Write a batch of images to disk using the TIFF format.
-
                         Args:
                             imgs_chunk (torch.Tensor): Batch of images to be written.
                             args_chunk (list): List of arguments for each image in the batch.
-
-
                         Returns:
                             None
                         """
                         images = imgs_chunk.numpy()
                         if images.dtype == np.int16:
                             images.dtype = np.uint16
-                        
-                        # def f(img_and_path, compression=self.compression, output_format=self.output_format, rotate_and_flip=False):
-                        #     imgarr, imgpath = img_and_path
-                        #     out_path = str(imgpath)
-                        #     imsave(out_path, imgarr, compression=self.compression, output_format=self.output_format, rotate_and_flip=False)
-
                         img_and_paths = zip(images, [args['output_path'] for args in args_chunk])
-                        
-                        # with multiprocessing.Pool(processes=16) as p:
-                        # p.imap(partial(f, compression=self.compression, output_format=self.output_format, rotate_and_flip=False), img_and_paths)
 
                         for img_and_path in img_and_paths:
                             imgarr, imgpath = img_and_path
                             out_path = str(imgpath)
                             imsave(out_path, imgarr, compression=self.compression, output_format=self.output_format, rotate_and_flip=False)
 
-
-
                     if self.timeprint: tic = time.time()
                     chunked = self.prepare_batch(load_batch)
-                    if self.timeprint: print("Batch #{} loading time: {}".format(batch_counter, time.time() - tic))
-                    # imgs_args = list(zip(read_imgs, args_batch))
-                    # process_chunks = list(mit.chunked_even(imgs_args, self.gpu_chunksize))
-                        
+                    if self.timeprint: print("Batch #{} loading time: {}".format(batch_counter, time.time() - tic))          
                     last_args_chunk = None
                     last_imgs_chunk = None
                     for imgs_chunk, args_chunk in chunked:
-                        # if self.timeprint: tic = time.time()
-                        # imgs_chunk = self.batch_to_torch16(args_chunk)
-                        # if self.timeprint: print("Batch {} loading time: {}".format(counter, time.time() - tic))
-
-                        # if self.provided_threshold is None or self.provided_threshold < 0:
-                        #     if self.timeprint: tic = time.time()
-                        #     threshold = self._prep_threshold(imgs_chunk, args_chunk)
-                        #     if self.timeprint: print("Threshold chunk # {} prep time: {}".format(chunk_counter, time.time() - tic))
-
                         if self.timeprint: tic = time.time()
                         imgs_chunk = imgs_chunk.to(device='cuda', non_blocking=False)
                         images32 = self.offsign16_to_32(imgs_chunk)
@@ -647,19 +620,12 @@ class Destriper:
 
                         imgs_chunk = imgs_chunk32.to(device='cpu', dtype=torch.int16, non_blocking=True)
                         if self.timeprint: print("Destriping chunk #{} time: {}".format(chunk_counter, time.time() - tic))
-
-                        # if self.post_rotate_flip:
-                        #     imgs_chunk = torch.rot90(imgs_chunk, k=1, dims=(1, 2))
-                        #     imgs_chunk = torch.flip(imgs_chunk, dims=(1,2))
-
                         if last_imgs_chunk is not None:
                             if self.timeprint: tic = time.time()
                             torch.cuda.synchronize()
                             torch_imwrite3(last_imgs_chunk, last_args_chunk)
                             if self.timeprint: print("Writing chunk #{} time: {}".format(chunk_counter, time.time() - tic))
                             pbar.update(len(last_args_chunk))
-                            # del last_imgs_chunk; del last_args_chunk
-
                         last_imgs_chunk = imgs_chunk
                         last_args_chunk = args_chunk
                         chunk_counter += 1
@@ -669,7 +635,6 @@ class Destriper:
                         torch_imwrite3(last_imgs_chunk, last_args_chunk)
                         if self.timeprint: print("Writing chunk #{} time: {}".format(chunk_counter, time.time() - tic))
                         pbar.update(len(last_args_chunk))
-                        # del last_imgs_chunk; del last_args_chunk
                     batch_counter += 1
                 # print('Done!')
 
@@ -733,7 +698,7 @@ def parse_extra_smoothing(arg_extra_smoothing: str) -> Union[int, bool, float]:
             msg = f"Invalid value for extra_smoothing: {arg_extra_smoothing}. Must be a float/int or 'True'/'False'"
             raise argparse.ArgumentTypeError(msg)
 
-def main(raw_args=None):
+def main(gui, root, count, raw_args=None):
     # print("Starting GPU destriping...")
     args = _parse_args(raw_args)
     sigma = [args.sigma1, args.sigma2]
@@ -762,7 +727,10 @@ def main(raw_args=None):
         else:
             output_path = Path(args.output)
             assert output_path.suffix == ''
-        destriper = Destriper(input_path,
+        destriper = Destriper(gui,
+                            root,
+                            count,
+                            input_path,
                             output_path,
                             sigma=sigma,
                             level=args.level,
