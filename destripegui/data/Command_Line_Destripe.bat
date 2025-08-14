@@ -1,8 +1,8 @@
 @echo on
 @echo Loading Destriper...
-@echo off
+@REM @echo off
 
 
 call activate cl_destripe_6
-command_line_destripe
+call destripe_gui
 pause

@@ -21,9 +21,9 @@ import tkinter as tk
 from tkinter import ttk
 
 from destripegui.destripe.core import main as cpu_destripe
-from destripegui.destripe.core_gpu import main as gpu_destripe
-from destripegui.destripe.utils import find_all_images
-from destripegui.destripe import supported_extensions
+# from destripegui.destripe.core_gpu import main as gpu_destripe
+# from destripegui.destripe.utils import find_all_images
+# from destripegui.destripe import supported_extensions
 
 def get_configs(config_path):
     reader = configparser.ConfigParser()   
@@ -317,6 +317,7 @@ def count_tiles(dir):
     dir['tiles'] = tiles
 
 def show_output(ac_dirs, current_dir):
+    gui['current_label'].config(text='Current Acquisition')
     for i in gui['current_tree'].get_children():
         gui['current_tree'].delete(i)
     gui['current_tree'].insert("", tk.END, values=(current_dir['display_data']))
@@ -338,6 +339,8 @@ def show_output(ac_dirs, current_dir):
             tile['input_images'],
             tile['output_images']
         ])
+
+
     current_dir['count'] = {'total': total_images, 'destriped': total_destriped}
     print('Current Acquisition: {}\n'.format(current_dir['path']))
 
@@ -554,10 +557,20 @@ def search_loop():
     ac_dirs = get_acquisition_dirs()
 
     if len(ac_dirs) == 0:
+        l = 247
+        configs['wait_counter'] += 1
+        start = ' '  *(configs['wait_counter'] % l)
+        end = ' ' * (l - configs['wait_counter'] %l - 1)
+        # start = ' ' * 247
+        # end = ' '
+        msg = start + 'Waiting for New Acquisitions' + end
+        gui['current_label'].config(text=(msg))
+
         print("Waiting for new acquisitions...")
         return
 
     if len(ac_dirs) > 0:
+        configs['wait_counter'] = 0
         current_dir = ac_dirs[0]
         count_tiles(current_dir)
         
@@ -637,7 +650,7 @@ def run_search_thread():
     #     print('running search loop')
     #     thread = threading.Thread(target=search_loop, daemon=True)
     #     thread.start()
-    root.after(1000, run_search_thread)
+    root.after(500, run_search_thread)
 
 def build_gui():
     gui['current'] = tk.Frame(root)
@@ -714,7 +727,7 @@ def build_gui():
     gui['queue_label'].pack(anchor='w', padx=5, pady=(40,0))
     gui['queue'].pack(anchor='w', padx=5, pady=(5,0))
     gui['done_label'].pack(anchor='w', padx=5, pady=(40,0))
-    gui['done'].pack(anchor='w', padx=5, pady=(5,0))
+    gui['done'].pack(anchor='w', padx=5, pady=(5,5))
 
 
 
@@ -760,6 +773,7 @@ def main():
 
     configs['input_dir'] = Path(configs['input_dir'])
     configs['output_dir'] = Path(configs['output_dir'])
+    configs['wait_counter'] = 0
 
     configs['safe_mode'] = False
     try:

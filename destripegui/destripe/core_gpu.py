@@ -27,6 +27,9 @@ from .utils import find_all_images, normalize_flat, interpolate, gaussian_filter
 
 class Destriper:
     def __init__(self,
+                gui,
+                root,
+                count,
                 input_path : Path,
                 output_path : Path,
                 sigma : List[float],
@@ -45,7 +48,7 @@ class Destriper:
                 # rotate : bool = False,
                 # post_rotate_flip : bool = False,
                 extra_smoothing : int = 1,
-                timeprint : bool = False,
+                timeprint : bool = True,
                 dont_convert_16bit : bool = False,
                 output_format : Optional[str] = None):
         """Destriper class that applies `streak_filter` to all images in `input_path` and write the results to `output_path`.
@@ -101,6 +104,9 @@ class Destriper:
         tiemprint : bool
             flag for printing out time taken for each batch step
         """
+        self.gui = gui
+        self.root = root
+        self.count = count
         self.input_path = input_path
         self.output_path = output_path
         self.sigma = sigma 
@@ -529,6 +535,9 @@ class Destriper:
 
     def batch_filter(self):
         # Error logs path
+        gui = self.gui
+        root = self.root
+        count = self.count
         error_path = os.path.join(self.output_path, 'destripe_log.txt')
         if os.path.exists(error_path):
             os.remove(error_path)
@@ -584,6 +593,12 @@ class Destriper:
         batch_counter = 0
         chunk_counter = 0
 
+        n = len(img_paths)
+        i = 0
+        gui['tile_progress_label'].config(text='Destriping...')
+        gui['tile_progress_text'].config(text='0/{} images'.format(n))
+        gui['tile_progress'].config(value=0)
+
         with tqdm.tqdm(total=(len(args)), ascii=True, bar_format=None) as pbar:
             for load_batch in load_args:
                 # print('Loading batch #{}'.format(batch_counter))
@@ -626,6 +641,16 @@ class Destriper:
                             torch_imwrite3(last_imgs_chunk, last_args_chunk)
                             if self.timeprint: print("Writing chunk #{} time: {}".format(chunk_counter, time.time() - tic))
                             pbar.update(len(last_args_chunk))
+                            new_images = len(last_args_chunk)
+                            i += new_images
+                            pct = i/n*100
+                            total_destriped = count['destriped'] + i
+                            total = count['total']
+                            total_pct = total_destriped / total * 100
+                            gui['tile_progress_text'].config(text='{}/{} images'.format(i, n))
+                            gui['tile_progress'].config(value=pct)
+                            gui['acq_progress_text'].config(text='{}/{} images'.format(total_destriped, total))
+                            gui['acq_progress'].config(value=total_pct)
                         last_imgs_chunk = imgs_chunk
                         last_args_chunk = args_chunk
                         chunk_counter += 1
@@ -635,19 +660,18 @@ class Destriper:
                         torch_imwrite3(last_imgs_chunk, last_args_chunk)
                         if self.timeprint: print("Writing chunk #{} time: {}".format(chunk_counter, time.time() - tic))
                         pbar.update(len(last_args_chunk))
+                        new_images = len(last_args_chunk)
+                        i += new_images
+                        pct = i/n*100
+                        total_destriped = count['destriped'] + i
+                        total = count['total']
+                        total_pct = total_destriped / total * 100
+                        gui['tile_progress_text'].config(text='{}/{} images'.format(i, n))
+                        gui['tile_progress'].config(value=pct)
+                        gui['acq_progress_text'].config(text='{}/{} images'.format(total_destriped, total))
+                        gui['acq_progress'].config(value=total_pct)
                     batch_counter += 1
                 # print('Done!')
-
-                # Interpolate images that could not be opened
-                if os.path.exists(error_path):
-                    with open(error_path, 'r') as fp:
-                        first_line = fp.readline()  # seems to purposefully not use this line
-                        images = fp.readlines()
-                        for image_path in images:
-                            interpolate(image_path, self.input_path, self.output_path)
-                        x = len(images)
-                        print('{} images could not be opened and were interpolated.  See destripe log for more details'.format(x))
-                        fp.close()
 
 
 def _parse_args(raw_args=None):
