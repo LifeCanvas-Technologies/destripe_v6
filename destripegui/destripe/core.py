@@ -9,7 +9,7 @@ import tifffile
 import imageio as iio
 import pywt
 import multiprocessing
-from tqdm.tk import tqdm
+from tqdm import tqdm
 from dcimg import DCIMGFile
 from . import raw
 import warnings
@@ -810,7 +810,7 @@ def batch_filter(gui, root, count, input_path, output_path, workers, chunks, sig
     gui['tile_progress_text'].config(text='0/{} images'.format(n))
     gui['tile_progress'].config(value=0)
     with multiprocessing.Pool(workers) as pool:
-        for result in pool.imap(_read_filter_save, args, chunksize=chunks):
+        for result in tqdm(pool.imap(_read_filter_save, args, chunksize=chunks)):
             i += 1
             pct = i/n*100
             total_destriped = count['destriped'] + i
@@ -818,9 +818,8 @@ def batch_filter(gui, root, count, input_path, output_path, workers, chunks, sig
             total_pct = total_destriped / total * 100
             gui['tile_progress_text'].config(text='{}/{} images'.format(i, n))
             gui['tile_progress'].config(value=pct)
-            if 'MIP' not in str(input_path):
-                gui['acq_progress_text'].config(text='{}/{} images'.format(total_destriped, total))
-                gui['acq_progress'].config(value=total_pct)
+            gui['acq_progress_text'].config(text='{}/{} images'.format(total_destriped, total))
+            gui['acq_progress'].config(value=total_pct)
             
     
     print('Done!')

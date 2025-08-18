@@ -1,0 +1,8 @@
+set output=C:\SmartSPIM_Data_output\2025_07_07\20250707_14_35_46_sample_1
+set input=C:\SmartSPIM_Data\2025_07_07\20250707_14_35_46_sample_1
+
+set renamed_input=%input%_Raw_Transferred
+
+RD /S /Q %output%
+
+RENAME %renamed% "20250707_14_35_46_sample_1"

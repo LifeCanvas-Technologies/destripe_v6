@@ -21,9 +21,9 @@ import tkinter as tk
 from tkinter import ttk
 
 from destripegui.destripe.core import main as cpu_destripe
-# from destripegui.destripe.core_gpu import main as gpu_destripe
-# from destripegui.destripe.utils import find_all_images
-# from destripegui.destripe import supported_extensions
+from destripegui.destripe.core_gpu import main as gpu_destripe
+from destripegui.destripe.utils import find_all_images
+from destripegui.destripe import supported_extensions
 
 def get_configs(config_path):
     reader = configparser.ConfigParser()   
@@ -327,6 +327,23 @@ def count_tiles(dir):
         })
     dir['tiles'] = tiles
 
+def count_mips(current_dir):
+    total_mips = 0
+    destriped_mips = 0
+    for item in os.listdir(current_dir['path']):
+        if 'MIP' in item:
+            input_path = os.path.join(current_dir['path'], item)
+            for root, _, files in os.walk(input_path):
+                total_mips += len(files)
+
+            output_path = os.path.join(current_dir['output_path'], item)
+            try:
+                for root, _, files in os.walk(output_path):
+                    destriped_mips += len(files)
+            except:
+                pass
+    return total_mips, destriped_mips
+
 def show_output(ac_dirs, current_dir):
     gui['current_label'].config(text='Current Acquisition')
     for i in gui['current_tree'].get_children():
@@ -350,7 +367,9 @@ def show_output(ac_dirs, current_dir):
             tile['input_images'],
             tile['output_images']
         ])
-
+    total_mips, destriped_mips = count_mips(current_dir)
+    total_images += total_mips
+    total_destriped += destriped_mips
 
     current_dir['count'] = {'total': total_images, 'destriped': total_destriped}
     print('Current Acquisition: {}\n'.format(current_dir['path']))
@@ -371,8 +390,9 @@ def show_output(ac_dirs, current_dir):
             print(ac_dirs[i]['path'])
             gui['queue_tree'].insert("", tk.END, values=(ac_dirs[i]['display_data']))
     
-def check_mips(current_dir):
+def check_mips(ac_dirs, current_dir):
     for item in os.listdir(current_dir['path']):
+        show_output(ac_dirs, current_dir)
         if 'MIP' in item:
             input_path = os.path.join(current_dir['path'], item)
             output_path = os.path.join(current_dir['output_path'], item)
@@ -575,8 +595,6 @@ def search_loop():
         configs['wait_counter'] += 1
         start = ' '  *(configs['wait_counter'] % l)
         end = ' ' * (l - configs['wait_counter'] %l - 1)
-        # start = ' ' * 247
-        # end = ' '
         msg = start + 'Waiting for New Acquisitions' + end
         gui['current_label'].config(text=(msg))
 
@@ -600,7 +618,7 @@ def search_loop():
         if finished:
 
             print('\nAll tiles have been destriped.  Checking for Maximum Intensity Projections...')
-            check_mips(current_dir)
+            check_mips(ac_dirs, current_dir)
             finish_directory(current_dir)
             return
 
@@ -727,7 +745,7 @@ def build_gui():
     gui['acq_progress_text'].pack(side='left')
     gui['acq_progress'].pack(side='left')
 
-    gui['tile_progress_label'] = tk.Label(gui['tile'], width=26, text="Current Task", anchor='w')
+    gui['tile_progress_label'] = tk.Label(gui['tile'], width=26, text="", anchor='w')
     gui['tile_progress_text'] = tk.Label(gui['tile'], width=15, text='', anchor='e')
     gui['tile_progress'] = ttk.Progressbar(gui['tile'], length=600, value=0)
     gui['tile_progress_label'].pack(side='left')
@@ -788,6 +806,7 @@ def main():
     configs['input_dir'] = Path(configs['input_dir'])
     configs['output_dir'] = Path(configs['output_dir'])
     configs['wait_counter'] = 0
+    configs['current_data'] = {}
 
     configs['safe_mode'] = False
     try:
