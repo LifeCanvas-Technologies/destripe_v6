@@ -1,6 +1,6 @@
 @REM @echo off
 @REM echo %cd%
-@REM if %cd% neq C:\Windows\system32 (
+@REM if /I %cd% neq C:\Windows\system32 (
 @REM 	echo You need to run this installer as an Administrator
 @REM 	pause
 @REM 	exit
@@ -27,7 +27,7 @@ set SCRIPT="%TEMP%\%RANDOM%-%RANDOM%-%RANDOM%-%RANDOM%.vbs"
 echo Set WshShell = CreateObject("Wscript.shell") >> %SCRIPT%
 echo Set oLink = WshShell.CreateShortcut("C:\Users\Public\Desktop\Destripe v6.lnk") >> %SCRIPT%
 @REM echo oLink.WindowStyle = 7 >> %SCRIPT%
-echo oLink.TargetPath = "%~dp0destripegui\data\Command_Line_Destripe.bat" >> %SCRIPT%
+echo oLink.TargetPath = "%~dp0destripegui\data\Destripe v6.exe" >> %SCRIPT%
 echo oLink.IconLocation = "%~dp0destripegui\data\lct.ico" >> %SCRIPT%
 echo oLink.Save >> %SCRIPT%
 

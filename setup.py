@@ -29,7 +29,8 @@ setuptools.setup(name='cl_destripe_6',
       entry_points={
         'console_scripts' : ['cpu-destripe=destripegui.destripe.core:main',
                              'gpu-destripe=destripegui.destripe.core_gpu:main',
-                             'revert_from_orig=destripegui.revert_from_orig:main',],
-        'gui_scripts' : ['destripe_gui=destripegui.destripegui:main']
+                             'revert_from_orig=destripegui.revert_from_orig:main',
+                             'destripe_gui=destripegui.destripegui:main'],
+        # 'gui_scripts' : ['destripe_gui=destripegui.destripegui']
       }
 )

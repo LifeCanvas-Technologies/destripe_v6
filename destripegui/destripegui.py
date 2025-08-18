@@ -67,7 +67,10 @@ def check_for_bad_images(path):
     
 
 def run_pystripe(input_path, output_path, current_dir):
-    sig_strs = current_dir['metadata']['sample metadata']['destripe'].split('/')
+    try:
+        sig_strs = current_dir['metadata']['sample metadata']['destripe'].split('/')
+    except:
+        sig_strs = current_dir['metadata']['sample_metadata']['destripe'].split('/')
     sigma = list(int(sig_str) for sig_str in sig_strs)
     workers = int(configs['workers'])
     chunks = int(configs['chunks'])
@@ -133,8 +136,13 @@ def get_metadata(dir):
     date = dt.strftime("%m/%d/%Y")
     time = dt.strftime("%H:%M:%S")
     name = text_list[3][18:]
-    obj = metadata['sample metadata']['objective']
-    immersion = metadata['sample metadata']['immersion']
+    try:
+        obj = metadata['sample metadata']['objective']
+        immersion = metadata['sample metadata']['immersion']
+    except:
+        obj = metadata['sample_metadata']['objective']
+        immersion = metadata['sample_metadata']['immersion']
+    
     lasers = ''
     x_tiles = []
     y_tiles = []
@@ -279,7 +287,10 @@ def get_acquisition_dirs():
    
     unfinished_dirs = []    
     for dir in ac_dirs:
-        destripe_status = dir['metadata']['sample metadata']['destripe_status']
+        try:
+            destripe_status = dir['metadata']['sample metadata']['destripe_status']
+        except:
+            destripe_status = dir['metadata']['sample_metadata']['destripe_status']
         if destripe_status == 'true':
             unfinished_dirs.append(dir)
         else:
@@ -810,6 +821,7 @@ def main():
     
     root = tk.Tk()
     root.title("Destripe GUI")
+    root.iconbitmap(Path(__file__).parent / 'data/lct.ico')
     build_gui()
     root.after(1000, run_search_thread)
     root.mainloop()

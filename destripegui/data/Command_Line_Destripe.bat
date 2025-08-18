@@ -1,6 +1,6 @@
-@echo on
-@echo Loading Destriper...
-@REM @echo off
+@REM @echo on
+@REM @echo Loading Destriper...
+@REM @REM @echo off
 
 
 call activate cl_destripe_6
