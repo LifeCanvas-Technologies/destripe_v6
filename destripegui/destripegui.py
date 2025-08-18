@@ -56,7 +56,10 @@ def run_pystripe(input_path, output_path, current_dir):
     # print('test')
     # input_path = Path(dir['path'])
     # output_path = Path(dir['output_path'])
-    sig_strs = current_dir['metadata']['sample metadata']['destripe'].split('/')
+    try:
+        sig_strs = current_dir['metadata']['sample metadata']['destripe'].split('/')
+    except:
+        sig_strs = current_dir['metadata']['sample_metadata']['destripe'].split('/')
     sigma = list(int(sig_str) for sig_str in sig_strs)
 
     # sigma = [256, 0]
@@ -247,7 +250,10 @@ def get_acquisition_dirs():
    
     unfinished_dirs = []    
     for dir in ac_dirs:
-        destripe_status = dir['metadata']['sample metadata']['destripe_status']
+        try:
+            destripe_status = dir['metadata']['sample metadata']['destripe_status']
+        except:
+            destripe_status = dir['metadata']['sample_metadata']['destripe_status']
         if destripe_status == 'true':
             unfinished_dirs.append(dir)
         else:
@@ -408,7 +414,10 @@ def change_status(dir, drive, msg):
     try:
         with open(metadata_path, 'r') as f:
             metadata = json.load(f)
-        metadata['sample metadata']['destripe_status'] = msg
+        try:
+            metadata['sample metadata']['destripe_status'] = msg
+        except:
+            metadata['sample_metadata']['destripe_status'] = msg
 
         with open(metadata_path, 'w') as f:
             json.dump(metadata, f, indent=2)
