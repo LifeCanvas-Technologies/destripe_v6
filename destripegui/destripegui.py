@@ -479,7 +479,10 @@ def change_status(dir, drive, msg):
     try:
         with open(metadata_path, 'r') as f:
             metadata = json.load(f)
-        metadata['sample metadata']['destripe_status'] = msg
+        try:
+            metadata['sample metadata']['destripe_status'] = msg
+        except:
+            metadata['sample_metadata']['destripe_status'] = msg
 
         with open(metadata_path, 'w') as f:
             json.dump(metadata, f, indent=2)
