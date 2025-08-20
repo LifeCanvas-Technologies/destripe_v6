@@ -18,7 +18,7 @@ import math
 from tabulate import tabulate
 from PIL import Image
 import tkinter as tk
-from tkinter import ttk
+from tkinter import ttk, messagebox
 
 from destripegui.destripe.core import main as cpu_destripe
 from destripegui.destripe.core_gpu import main as gpu_destripe
@@ -247,10 +247,17 @@ def search_directory(search_dir, ac_list, depth):
     try:
         contents = os.listdir(search_dir)
     except:
-        print('Could not access input directory: {}.'.format(configs['input_dir']))
-        print('Make sure drive is accessible, and not open in another program.')
-        x = input('Press Enter to retry...')
-        search_loop()
+        msg = 'Could not access input directory: {}.'.format(configs['input_dir'])
+        msg += '  ' + 'Make sure drive is accessible, and not open in another program'
+        result = messagebox.askretrycancel("Access Error", msg)
+        if result: search_loop()
+        else: exit()        
+        
+        
+        # print('Could not access input directory: {}.'.format(configs['input_dir']))
+        # print('Make sure drive is accessible, and not open in another program.')
+        # x = input('Press Enter to retry...')
+        # search_loop()
 
     is_acquisition = True
     if 'metadata.txt' not in contents: is_acquisition = False
@@ -381,11 +388,10 @@ def show_output(ac_dirs, current_dir):
     gui['acq_progress'].config(value=pct*100)
     gui['acq_progress_text'].config(text='{}/{} images'.format(total_destriped, total_images))
 
-
+    for i in gui['queue_tree'].get_children():
+        gui['queue_tree'].delete(i)
     if len(ac_dirs) > 1:
         print('\nAdditional Acquisitions in Destriping Queue:')
-        for i in gui['queue_tree'].get_children():
-            gui['queue_tree'].delete(i)
         for i in range(1, len(ac_dirs)):
             print(ac_dirs[i]['path'])
             gui['queue_tree'].insert("", tk.END, values=(ac_dirs[i]['display_data']))
@@ -439,7 +445,6 @@ def finish_directory(dir):
     # log(' finishing {}'.format(dir['path']), True)
 
 def append_folder_name(dir, drive, msg, attempts = 0):
-    global reconnect
     if drive == 'in':
         path = dir['path'] 
     else:
@@ -456,10 +461,20 @@ def append_folder_name(dir, drive, msg, attempts = 0):
         print('Cannot access {} to rename folder'.format(path))
         if configs['reconnect']:
             print('Retrying in 5 seconds')
+            new_window = tk.Toplevel(root) 
+            new_window.title("Access Error")
+            new_window.geometry("300x200")
+            label = tk.Label(new_window, text='Cannot access {} to rename folder\nRetrying in 5 seconds'.format(path))
+            label.pack(pady=20)
             time.sleep(5)
+            new_window.destroy()
         else:
-            x = input('Make sure it is accessible and not open in another program, then press Enter to retry...\n')
-        append_folder_name(dir, drive, msg)
+            # x = input('Make sure it is accessible and not open in another program, then press Enter to retry...\n')
+            msg = 'Cannot access {} to rename folder\nRetrying in 5 seconds'.format(path)
+            result = messagebox.askretrycancel("Access Error", msg)
+            if result: append_folder_name(dir, drive, msg)
+            else: exit()            
+        
 
 def prepend_tag(dir, drive, msg):
     # prepend tag to metadata file
@@ -486,8 +501,13 @@ def prepend_tag(dir, drive, msg):
                 writer.writerow(row)
     except:
         print('Cannot access {} to change destripe tag'.format(metadata_path))
-        x = input('Make sure it is accessible and not open in another program, then press Enter to retry...\n')
-        prepend_tag(dir, drive, msg)
+        # x = input('Make sure it is accessible and not open in another program, then press Enter to retry...\n')
+        msg = 'Cannot access {} to change destripe tag'.format(metadata_path)
+        msg += '\nMake sure it is accessible and not open in another program'
+        result = messagebox.askretrycancel("Access Error", msg)
+        if result: prepend_tag(dir, drive, msg)
+        else: exit()  
+        
 
 def change_status(dir, drive, msg):
     # prepend tag to metadata file
@@ -509,9 +529,13 @@ def change_status(dir, drive, msg):
 
     except:
         print('Cannot access {} to change destripe_status'.format(metadata_path))
-        x = input('Make sure it is accessible and not open in another program, then press Enter to retry...\n')
-        change_status(dir, drive, msg)
-
+        # x = input('Make sure it is accessible and not open in another program, then press Enter to retry...\n')
+        msg = 'Cannot access {} to change destripe status'.format(metadata_path)
+        msg += '\nMake sure it is accessible and not open in another program'
+        result = messagebox.askretrycancel("Access Error", msg)
+        if result: change_status(dir, drive, msg)
+        else: exit()  
+        
 def abort(dir):
     # Perform tasks needed to respond to aborted acquisition
     
@@ -599,6 +623,8 @@ def search_loop():
         gui['current_label'].config(text=(msg))
 
         print("Waiting for new acquisitions...")
+        for item in configs['no_list']:
+            print(item)
         return
 
     if len(ac_dirs) > 0:
@@ -656,10 +682,11 @@ def search_loop():
                 configs['stall_counter'][2] = 0
 
             if configs['stall_limit'] and configs['stall_counter'][2] > int(configs['stall_limit']):
-                x = input('\nThis acquisition ({}) seems to be incomplete.  Mark as aborted (y/n)?\n'.format(current_dir['path']))
-                if x in 'yesYesyeahsure':
-                    abort(current_dir)
-                    return
+                # x = input('\nThis acquisition ({}) seems to be incomplete.  Mark as aborted (y/n)?\n'.format(current_dir['path']))
+                result = messagebox.askyesno("Stalled Acquisition", 'This acquisition ({}) seems to be incomplete.  Mark as aborted?'.format(current_dir['path']))
+                if result: abort(current_dir)
+                else: configs['stall_counter'][2] = 0
+                return
         return
     return
 
@@ -711,33 +738,6 @@ def build_gui():
             gui[tree_name].config(yscrollcommand=gui[scroll_name].set)
             gui[scroll_name].pack(side='left', fill='y')
 
-    # gui['queue_tree'].config(height=5)
-    # gui['queue_scroll'] = ttk.Scrollbar(root, orient='vertical', command=gui['queue_tree'].yview)
-    # gui['queue_tree'].config(yscrollcommand=gui['queue_scroll'].set)
-
-    # gui['done_tree'].config(height=5)
-    # gui['done_scroll'] = ttk.Scrollbar(root, orient='vertical', command=gui['done_tree'].yview)
-    # gui['done_tree'].config(yscrollcommand=gui['done_scroll'].set)
-        
-        # gui[name].column("date", anchor="w", width=100)
-        # gui[name].column("time", anchor="w", width=100)
-        # gui[name].column("name", anchor="w", width=100)
-        # gui[name].column("objective", anchor="w", width=100)
-        # gui[name].column("immersion", anchor="w", width=100)
-        # gui[name].column("wavelengths", anchor="w", width=100)
-        # gui[name].column("tiles", anchor="w", width=100)
-
-        # gui['current_tree'].heading("date", anchor="w", text="Date")
-        # gui['current_tree'].heading("time", anchor="w", text="Time")
-        # gui['current_tree'].heading("name", anchor="w", text="Name")
-        # gui['current_tree'].heading("objective", anchor="w", text="Objective")
-        # gui['current_tree'].heading("immersion", anchor="w", text="Immersion")
-        # gui['current_tree'].heading("wavelengths", anchor="w", text="Wavelengths")
-        # gui['current_tree'].heading("tiles", anchor="w", text="Tiles")
-
-    # gui['status_label'] = tk.Label(root, text="Current Status:")
-    # gui['status'] = tk.Label(root, text='')
-
     gui['acq_progress_label'] = tk.Label(gui['acq'], width=26, text="Total Progress", anchor='w')
     gui['acq_progress_text'] = tk.Label(gui['acq'], width=15, text='', anchor='e')
     gui['acq_progress'] = ttk.Progressbar(gui['acq'], length=600, value=0)
@@ -762,29 +762,6 @@ def build_gui():
     gui['done'].pack(anchor='w', padx=5, pady=(5,5))
 
 
-
-    # gui['current_label'].pack()
-
-    # root.columnconfigure(0, minsize=200)
-    # gui['current_label'].grid(row=0, column=0, columnspan=3, padx=5, sticky='w')
-    # gui['current_tree'].grid(row=1, column=0, columnspan=3, padx=5, pady=5, sticky='w')
-    # # gui['status_label'].grid(row=2, column=0, padx=5, pady=5, sticky='w')
-    # # gui['status'].grid(row=2, column=1, padx=5, pady=5, sticky='w')
-    # gui['acq_progress_label'].grid(row=2, column=0, padx=5, pady=5, sticky='w')
-    # gui['acq_progress_text'].grid(row=2, column=1, padx=5, pady=5, sticky='e')
-    # gui['acq_progress'].grid(row=2, column=2, padx=5, pady=5, sticky='w')
-
-    # gui['tile_progress_label'].grid(row=3, column=0, padx=5, pady=5, sticky='w')
-    # gui['tile_progress_text'].grid(row=3, column=1, padx=5, pady=5, sticky='e')
-    # gui['tile_progress'].grid(row=3, column=2, padx=5, pady=5, sticky='w')
-
-    # gui['queue_label'].grid(row=4, column=0, columnspan=3, padx=5, pady=(40,0), sticky='w')
-    # gui['queue_tree'].grid(row=5, column=0, columnspan=3, padx=5, pady=5, sticky='w')
-
-    # gui['done_label'].grid(row=6, column=0, columnspan=3, padx=5, sticky='w')
-    # gui['done_tree'].grid(row=7, column=0, columnspan=3, padx=5, pady=5, sticky='w')  
-
-
 def main():
     # print('testing')
     if 'configs' not in globals():
@@ -792,11 +769,17 @@ def main():
         if GetLastError(  ) == ERROR_ALREADY_EXISTS:
             # Take appropriate action, as this is the second
             # instance of this script; for example:
-            print('Another instance of destripegui is already running')
+            # print('Another instance of destripegui is already running')
+            messagebox.showwarning("Multiple Instances", "There is already another instance of Destripe GUI running")
             exit(1)
 
     global configs, root, gui
     gui = {}
+
+    root = tk.Tk()
+    root.title("Destripe GUI")
+    root.iconbitmap(Path(__file__).parent / 'data/lct.ico')
+    build_gui()
     
     print('Reading config file...\n')
 
@@ -823,28 +806,40 @@ def main():
     if 'check_corrupt' not in configs.keys(): configs['check_corrupt'] = False
     if 'stall_limit' not in configs.keys(): configs['stall_limit'] = False
     if 'time_stamp' not in configs.keys(): configs['time_stamp'] = False  
-
+    
     try:
         x = os.listdir(configs['input_dir'])
     except:
-        print('Could not access input directory: {}.'.format(configs['input_dir']))
-        print('Make sure drive is accessible, or change drive location in config file: {}'.format(config_path))
-        x = input('Press Enter to retry...')
-        main()
+        msg = 'Could not access input directory: {}.'.format(configs['input_dir'])
+        msg += '  ' + 'Make sure drive is accessible, or change drive location in config file: {}'.format(config_path)
+        result = messagebox.askretrycancel("Access Error", msg)
+        if result:
+            root.destroy()
+            main()
+        else: exit()
+        # print('Could not access input directory: {}.'.format(configs['input_dir']))
+        # print('Make sure drive is accessible, or change drive location in config file: {}'.format(config_path))
+        # x = input('Press Enter to retry...')
+        # main()
+        
     try:
         x = os.listdir(configs['output_dir'])
     except:
-        print('Could not access output directory: {}.'.format(configs['output_dir']))
-        print('Make sure drive is accessible, or change drive location in config file: {}'.format(config_path))
-        x = input('Press Enter to retry...')
-        main()
+        msg = 'Could not access output directory: {}.'.format(configs['output_dir'])
+        msg += '  ' + 'Make sure drive is accessible, or change drive location in config file: {}'.format(config_path)
+        result = messagebox.askretrycancel("Access Error", msg)
+        if result:
+            root.destroy()
+            main()
+        else: exit()
+
+        # print('Could not access output directory: {}.'.format(configs['output_dir']))
+        # print('Make sure drive is accessible, or change drive location in config file: {}'.format(config_path))
+        # x = input('Press Enter to retry...')
+        # main()
     
     print('\nScanning {} for new acquisitions...\n'.format(configs['input_dir']))
     
-    root = tk.Tk()
-    root.title("Destripe GUI")
-    root.iconbitmap(Path(__file__).parent / 'data/lct.ico')
-    build_gui()
     root.after(1000, run_search_thread)
     root.mainloop()
 
