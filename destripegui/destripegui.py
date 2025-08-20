@@ -674,6 +674,7 @@ def search_loop():
 
         elif waiting_tile:
             print('\nWaiting for current tile: {} to finish being acquired...'.format(waiting_tile['path']))
+            gui['tile_progress_label'].config(text='Waiting for Current Tile...')
             if configs['stall_counter'][0] == waiting_tile['path'] and configs['stall_counter'][1] == waiting_tile['input_images']:
                 configs['stall_counter'][2] += 1
             else:
