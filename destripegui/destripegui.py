@@ -67,11 +67,15 @@ def check_for_bad_images(path):
     
 
 def run_pystripe(input_path, output_path, current_dir):
-    try:
-        sig_strs = current_dir['metadata']['sample metadata']['destripe'].split('/')
-    except:
-        sig_strs = current_dir['metadata']['sample_metadata']['destripe'].split('/')
-    sigma = list(int(sig_str) for sig_str in sig_strs)
+    # try:
+        # sig_strs = current_dir['metadata']['sample metadata']['destripe'].split('/')
+    # except:
+        # sig_strs = current_dir['metadata']['sample_metadata']['destripe'].split('/')
+    # sigma = list(int(sig_str) for sig_str in sig_strs)
+    
+    sigma_1 = configs['sigma_1']
+    sigma_2 = configs['sigma_2']
+    wavelet = configs['wavelet']
     workers = int(configs['workers'])
     chunks = int(configs['chunks'])
     use_gpu = int(configs["use_gpu"])
@@ -90,8 +94,9 @@ def run_pystripe(input_path, output_path, current_dir):
         print("Using GPU Destriper")
         cmd = ["-i", str(input_path),
                         "-o", str(output_path), 
-                        "--sigma1", str(sigma[0]),
-                        "--sigma2", str(sigma[1]),
+                        "--sigma1", str(sigma_1),
+                        "--sigma2", str(sigma_2),
+                        "--wavelet", str(wavelet),
                         "--cpu-readers", str(workers), 
                         "--gpu-chunksize", str(gpu_chunksize),
                         "--extra-smoothing", "True"]
@@ -106,8 +111,9 @@ def run_pystripe(input_path, output_path, current_dir):
         print("Using CPU Destriper")
         cpu_destripe(["-i", str(input_path),
                         "-o", str(output_path), 
-                        "--sigma1", str(sigma[0]),
-                        "--sigma2", str(sigma[1]),
+                        "--sigma1", str(sigma_1),
+                        "--sigma2", str(sigma_2),
+                        "--wavelet", str(wavelet),
                         "--workers", str(workers),
                         "--chunks", str(chunks)],
                         gui,
