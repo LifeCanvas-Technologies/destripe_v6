@@ -254,7 +254,7 @@ def get_metadata_v5(dir):
     time = dt.strftime("%H:%M:%S")
     name = text_list[3][18:]
 
-    obj = metadata['Obj']
+    obj = metadata['sample metadata']['Obj']
     immersion = ''
     
     lasers = ''
