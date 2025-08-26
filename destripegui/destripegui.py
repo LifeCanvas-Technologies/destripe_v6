@@ -38,7 +38,7 @@ def get_configs(config_path):
 
 def check_for_bad_images(path):
     print('\nChecking for corrupt files...')
-    count = 0
+    bad_count = 0
     start = datetime.now()
     gui['tile_progress_label'].config(text='Checking for Corrupt Images...')
     n = len(os.listdir(path))
@@ -56,14 +56,14 @@ def check_for_bad_images(path):
             
         except:
             print("Bad file: {}".format(filename))
-            count += 1
+            bad_count += 1
         
     time = datetime.now() - start
-    print("{} corrupt files found.".format(count, time.seconds))
+    print("{} corrupt files found.".format(bad_count, time.seconds))
     
 
 
-    return count
+    return bad_count
     
 
 def run_pystripe(input_path, output_path, current_dir):
@@ -681,7 +681,10 @@ def search_loop():
         destripe_tile = False
         waiting_tile = False
 
+        tile_count = len(current_dir['tiles'])
+        i = 0
         for tile in current_dir['tiles']:
+            i += 1
             if tile['input_images'] >= tile['expected'] and tile['output_images'] < tile['expected']:
                 destripe_tile = tile['path']
                 break
@@ -695,6 +698,8 @@ def search_loop():
         if destripe_tile:
             input_path = os.path.join(current_dir['path'], destripe_tile)
             output_path = os.path.join(current_dir['output_path'], destripe_tile)
+            current_dir['count']['tile_index'] = i
+            current_dir['count']['tile_count'] = tile_count
             if configs['time_stamp']:
                 time_stamp_start(current_dir)
             print('\nDestriping {}...\n'.format(destripe_tile))
