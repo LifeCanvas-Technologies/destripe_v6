@@ -194,7 +194,7 @@ def get_metadata_v5(dir):
     # builds metadata dict
     metadata_path = os.path.join(dir['path'], 'metadata.txt')
 
-    metadata_dict = {
+    metadata = {
         'channels': [],
         'tiles': []
     }
@@ -232,20 +232,44 @@ def get_metadata_v5(dir):
     d = pair_key_value_lists(sections['gen_keys'], sections['gen_vals'])
     target_number = get_target_number(d['Z_Block'], d['Z step (m)'])
     d['destripe_status'], d['destripe'] = parse_destripe_tag(d['Destripe'])
-    metadata_dict.update({'sample metadata': d})
+    metadata.update({'sample metadata': d})
 
     for channel in sections['channel_vals']:
         d = pair_key_value_lists(sections['channel_keys'], channel)
-        metadata_dict['channels'].append(d)
+        metadata['channels'].append(d)
 
     for tile in sections['tile_vals']:
         d = pair_key_value_lists(sections['tile_keys'], tile)
         d['NumImages'] = 1
         if int(d['Skip']) == 1:
             d['NumImages'] = target_number
-        metadata_dict['tiles'].append(d)
+        metadata['tiles'].append(d)
 
-    dir['metadata'] = metadata_dict
+    dir['metadata'] = metadata
+
+    text = dir['path']
+    text_list = text.split("\\")
+    dt = datetime.strptime(text_list[3][:17], "%Y%m%d_%H_%M_%S")
+    date = dt.strftime("%m/%d/%Y")
+    time = dt.strftime("%H:%M:%S")
+    name = text_list[3][18:]
+
+    obj = metadata['Obj']
+    immersion = ''
+    
+    lasers = ''
+    x_tiles = []
+    y_tiles = []
+    for tile in metadata['tiles']:
+        if tile['X'] not in x_tiles:
+            x_tiles.append(tile['X'])
+        if tile['Y'] not in y_tiles:
+            y_tiles.append(tile['Y'])
+        if tile['Laser'] not in lasers:
+            lasers += '|{}'.format(tile['Laser'])
+    lasers = lasers[1:]
+    tiles = '{}x{}'.format(len(x_tiles), len(y_tiles))
+    dir['display_data'] = [date, time, name, obj, immersion, lasers, tiles]
 
 def search_directory(search_dir, ac_list, depth):
     # Recursive search function through input_dir to find directories with metadata.json.  Ignores no_list
