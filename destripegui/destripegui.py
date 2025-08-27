@@ -567,7 +567,10 @@ def time_stamp_start(current_dir):
         with open(time_file, 'r') as f:
             pass
     except:
-        os.makedirs(current_dir['output_path'])
+        try:
+            os.makedirs(current_dir['output_path'])
+        except:
+            pass
         with open(time_file, 'w') as f:
             f.write('Destriper Start Time: {}'.format(datetime.now().strftime("%m/%d/%Y, %H:%M:%S")))
 
@@ -591,8 +594,14 @@ def time_stamp_finish(current_dir):
         acq_file = os.path.join(current_dir['path'], 'acquisition log.txt')
         with open(acq_file, 'r') as f:
             lines = f.readlines()
-        line = lines[5]
-        acq_start = datetime.strptime(line[:line.index("\t")], "%Y-%m-%dT%H:%M:%S")
+        for line in lines:
+            try:
+                acq_start = datetime.strptime(line[:line.index("\t")], "%Y-%m-%dT%H:%M:%S")
+                break
+            except:
+                pass
+        
+        # acq_start = datetime.strptime(line[:line.index("\t")], "%Y-%m-%dT%H:%M:%S")
         line = lines[-1]
         acq_finish = datetime.strptime(line[:line.index("\t")], "%Y-%m-%dT%H:%M:%S")
     else:
