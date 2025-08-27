@@ -586,7 +586,7 @@ def abort(dir):
         append_folder_name(dir, 'out', configs['output_abort'])
             
 def time_stamp_start(current_dir):
-    time_file = os.path.join(current_dir['output_path'], 'Time Stamps.txt')
+    time_file = os.path.join(current_dir['output_path'], configs['destripe_log'])
     try:
         with open(time_file, 'r') as f:
             pass
@@ -600,7 +600,7 @@ def time_stamp_start(current_dir):
 
 def time_stamp_finish(current_dir):
     finish_time = datetime.now()
-    time_file = os.path.join(current_dir['output_path'], 'Time Stamps.txt')
+    time_file = os.path.join(current_dir['output_path'], configs['destripe_log'])
 
     with open(time_file, 'r') as f:
         start_string = f.readlines()[0]
@@ -645,6 +645,18 @@ def time_stamp_finish(current_dir):
     timer_text += "\n\nAcquisition Start Time: {}".format(acq_start.strftime("%m/%d/%Y, %H:%M:%S"))
     timer_text += "\nAcquisition Finish Time: {}".format(acq_finish.strftime("%m/%d/%Y, %H:%M:%S"))
     timer_text += "\nAcquisition Elapsed Time: {:02}:{:02}:{:02}".format(hours, minutes, seconds)
+    timer_text +="\n\nDestripe Parameters"
+    timer_text +="\nsigma_1: {}".format(configs['sigma_1'])
+    timer_text +="\nsigma_2: {}".format(configs['sigma_2'])
+    timer_text +="\nwavelet: {}".format(configs['wavelet'])
+    timer_text +="\nworkers: {}".format(configs['workers'])
+    timer_text +="\nuse_gpu: {}".format(configs['use_gpu'])
+    timer_text +="\nram_loadsize: {}".format(configs['ram_loadsize'])
+    timer_text +="\ngpu_chunksize: {}".format(configs['gpu_chunksize'])
+    timer_text +="\ncpu_readers: {}".format(configs['cpu_readers'])
+    timer_text +="\nchunks: {}".format(configs['chunks'])
+      
+    
 
     with open(time_file, 'a') as f:
         f.write(timer_text)
