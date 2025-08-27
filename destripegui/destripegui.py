@@ -38,7 +38,7 @@ def get_configs(config_path):
 
 def check_for_bad_images(path):
     print('\nChecking for corrupt files...')
-    count = 0
+    bad_count = 0
     start = datetime.now()
     gui['tile_progress_label'].config(text='Checking for Corrupt Images...')
     n = len(os.listdir(path))
@@ -56,14 +56,14 @@ def check_for_bad_images(path):
             
         except:
             print("Bad file: {}".format(filename))
-            count += 1
+            bad_count += 1
         
     time = datetime.now() - start
-    print("{} corrupt files found.".format(count, time.seconds))
+    print("{} corrupt files found.".format(bad_count, time.seconds))
     
 
 
-    return count
+    return bad_count
     
 
 def run_pystripe(input_path, output_path, current_dir):
@@ -194,7 +194,7 @@ def get_metadata_v5(dir):
     # builds metadata dict
     metadata_path = os.path.join(dir['path'], 'metadata.txt')
 
-    metadata_dict = {
+    metadata = {
         'channels': [],
         'tiles': []
     }
@@ -232,20 +232,44 @@ def get_metadata_v5(dir):
     d = pair_key_value_lists(sections['gen_keys'], sections['gen_vals'])
     target_number = get_target_number(d['Z_Block'], d['Z step (m)'])
     d['destripe_status'], d['destripe'] = parse_destripe_tag(d['Destripe'])
-    metadata_dict.update({'sample metadata': d})
+    metadata.update({'sample metadata': d})
 
     for channel in sections['channel_vals']:
         d = pair_key_value_lists(sections['channel_keys'], channel)
-        metadata_dict['channels'].append(d)
+        metadata['channels'].append(d)
 
     for tile in sections['tile_vals']:
         d = pair_key_value_lists(sections['tile_keys'], tile)
         d['NumImages'] = 1
         if int(d['Skip']) == 1:
             d['NumImages'] = target_number
-        metadata_dict['tiles'].append(d)
+        metadata['tiles'].append(d)
 
-    dir['metadata'] = metadata_dict
+    dir['metadata'] = metadata
+
+    text = dir['path']
+    text_list = text.split("\\")
+    dt = datetime.strptime(text_list[3][:17], "%Y%m%d_%H_%M_%S")
+    date = dt.strftime("%m/%d/%Y")
+    time = dt.strftime("%H:%M:%S")
+    name = text_list[3][18:]
+
+    obj = metadata['sample metadata']['Obj']
+    immersion = ''
+    
+    lasers = ''
+    x_tiles = []
+    y_tiles = []
+    for tile in metadata['tiles']:
+        if tile['X'] not in x_tiles:
+            x_tiles.append(tile['X'])
+        if tile['Y'] not in y_tiles:
+            y_tiles.append(tile['Y'])
+        if tile['Laser'] not in lasers:
+            lasers += '|{}'.format(tile['Laser'])
+    lasers = lasers[1:]
+    tiles = '{}x{}'.format(len(x_tiles), len(y_tiles))
+    dir['display_data'] = [date, time, name, obj, immersion, lasers, tiles]
 
 def search_directory(search_dir, ac_list, depth):
     # Recursive search function through input_dir to find directories with metadata.json.  Ignores no_list
@@ -666,7 +690,10 @@ def search_loop():
         destripe_tile = False
         waiting_tile = False
 
+        tile_count = len(current_dir['tiles'])
+        i = 0
         for tile in current_dir['tiles']:
+            i += 1
             if tile['input_images'] >= tile['expected'] and tile['output_images'] < tile['expected']:
                 destripe_tile = tile['path']
                 break
@@ -680,6 +707,8 @@ def search_loop():
         if destripe_tile:
             input_path = os.path.join(current_dir['path'], destripe_tile)
             output_path = os.path.join(current_dir['output_path'], destripe_tile)
+            current_dir['count']['tile_index'] = i
+            current_dir['count']['tile_count'] = tile_count
             if configs['time_stamp']:
                 time_stamp_start(current_dir)
             print('\nDestriping {}...\n'.format(destripe_tile))
@@ -755,15 +784,15 @@ def build_gui():
             gui[scroll_name].pack(side='left', fill='y')
 
     gui['acq_progress_label'] = tk.Label(gui['acq'], width=26, text="Total Progress", anchor='w')
-    gui['acq_progress_text'] = tk.Label(gui['acq'], width=15, text='', anchor='e')
-    gui['acq_progress'] = ttk.Progressbar(gui['acq'], length=600, value=0)
+    gui['acq_progress_text'] = tk.Label(gui['acq'], width=22, text='', anchor='e')
+    gui['acq_progress'] = ttk.Progressbar(gui['acq'], length=550, value=0)
     gui['acq_progress_label'].pack(side='left')
     gui['acq_progress_text'].pack(side='left')
     gui['acq_progress'].pack(side='left')
 
     gui['tile_progress_label'] = tk.Label(gui['tile'], width=26, text="", anchor='w')
-    gui['tile_progress_text'] = tk.Label(gui['tile'], width=15, text='', anchor='e')
-    gui['tile_progress'] = ttk.Progressbar(gui['tile'], length=600, value=0)
+    gui['tile_progress_text'] = tk.Label(gui['tile'], width=22, text='', anchor='e')
+    gui['tile_progress'] = ttk.Progressbar(gui['tile'], length=550, value=0)
     gui['tile_progress_label'].pack(side='left')
     gui['tile_progress_text'].pack(side='left')
     gui['tile_progress'].pack(side='left')

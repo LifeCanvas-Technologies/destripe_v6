@@ -806,7 +806,7 @@ def batch_filter(gui, root, count, input_path, output_path, workers, chunks, sig
     if 'MIP' in str(input_path):
         gui['tile_progress_label'].config(text='Destriping MIPs...')
     else:
-        gui['tile_progress_label'].config(text='Destriping...')
+        gui['tile_progress_label'].config(text='Destriping Tile {}/{}...'.format(count['tile_index'], count['tile_count']))
     gui['tile_progress_text'].config(text='0/{} images'.format(n))
     gui['tile_progress'].config(value=0)
     with multiprocessing.Pool(workers) as pool:

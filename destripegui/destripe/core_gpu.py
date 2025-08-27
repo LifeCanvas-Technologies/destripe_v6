@@ -595,7 +595,7 @@ class Destriper:
 
         n = len(img_paths)
         i = 0
-        gui['tile_progress_label'].config(text='Destriping...')
+        gui['tile_progress_label'].config(text='Destriping Tile {}/{}...'.format(count['tile_index'], count['tile_count']))
         gui['tile_progress_text'].config(text='0/{} images'.format(n))
         gui['tile_progress'].config(value=0)
 
