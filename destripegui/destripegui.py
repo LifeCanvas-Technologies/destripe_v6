@@ -238,7 +238,7 @@ def search_directory(search_dir, ac_list, depth):
 def get_acquisition_dirs():
     # run recursive search for new directories.  Build metadata dicts. Checks metadata flags and folder names to make
     # sure its actually new, and adds to no_list if not 
-
+    done_suffix = configs['output_done']
     search_dir = configs['input_dir']
     ac_dirs = search_directory(search_dir, list(), depth=3)
             
@@ -255,7 +255,11 @@ def get_acquisition_dirs():
         except:
             destripe_status = dir['metadata']['sample_metadata']['destripe_status']
         if destripe_status == 'true':
-            unfinished_dirs.append(dir)
+            output_sample_path_finished = str(dir['output_path']) + done_suffix
+            if os.path.exists(output_sample_path_finished):
+                configs['no_list'].append(dir['path'])
+            else:
+                unfinished_dirs.append(dir)
         else:
             configs['no_list'].append(dir['path'])
     
@@ -332,7 +336,11 @@ def check_mips(current_dir):
 def finish_directory(dir):
     configs['no_list'].append(dir['path'])
     if configs['time_stamp']:
-        time_stamp_finish(dir)
+        try:
+            time_stamp_finish(dir)
+        except Exception as e:
+            # Handle case where it fails, we don't want it to just exit everything
+            print(f"Non-fatal error in time stamping: {e}\nMoving on....")
 
     for file in Path(dir['path']).iterdir():
         file_name = os.path.split(file)[1]
@@ -348,7 +356,7 @@ def finish_directory(dir):
         prepend_tag(dir, 'out', 'D')
 
     # x = input('about to rename...')
-    append_folder_name(dir, 'in', configs['input_done'])
+    # append_folder_name(dir, 'in', configs['input_done']) #TODO: potentially put this back in
     append_folder_name(dir, 'out', configs['output_done'])
 
     # log(' finishing {}'.format(dir['path']), True)
@@ -436,7 +444,7 @@ def abort(dir):
         change_status(dir, 'in', 'aborted')
     else:
         prepend_tag(dir, 'in', 'A')
-    append_folder_name(dir, 'in', configs['input_abort'])
+    # append_folder_name(dir, 'in', configs['input_abort'])
 
     if os.path.exists(dir['output_path']):
         if os.path.exists(os.path.join(dir['output_path'], 'metadata.json')):
@@ -444,7 +452,7 @@ def abort(dir):
                 change_status(dir, 'out', 'aborted')
             else:
                 prepend_tag(dir, 'out', 'A')
-        append_folder_name(dir, 'out', configs['output_abort'])
+        # append_folder_name(dir, 'out', configs['output_abort'])
             
 def time_stamp_start(current_dir):
     time_file = os.path.join(current_dir['output_path'], 'Time Stamps.txt')
@@ -455,6 +463,16 @@ def time_stamp_start(current_dir):
         os.makedirs(current_dir['output_path'])
         with open(time_file, 'w') as f:
             f.write('Destriper Start Time: {}'.format(datetime.now().strftime("%m/%d/%Y, %H:%M:%S")))
+
+def parse_line_for_time(line):
+    match = re.search(r'([A-Za-z]{3}\s+\d{1,2}\s+\d{4}:\d{2}:\d{2}:\d{2})', line)
+    if match:
+        timestamp_str = match.group(1)
+        acq_start = datetime.strptime(timestamp_str, "%b %d %Y:%H:%M:%S")
+    else:
+        print("no timestamp found")
+        acq_start = None
+    return acq_start
 
 def time_stamp_finish(current_dir):
     finish_time = datetime.now()
@@ -476,10 +494,8 @@ def time_stamp_finish(current_dir):
         acq_file = os.path.join(current_dir['path'], 'acquisition log.txt')
         with open(acq_file, 'r') as f:
             lines = f.readlines()
-        line = lines[5]
-        acq_start = datetime.strptime(line[:line.index("\t")], "%Y-%m-%dT%H:%M:%S")
-        line = lines[-1]
-        acq_finish = datetime.strptime(line[:line.index("\t")], "%Y-%m-%dT%H:%M:%S")
+        acq_start = parse_line_for_time(lines[5])
+        acq_finish = parse_line_for_time(lines[-1])
     else:
         acq_file = os.path.join(current_dir['path'], 'ASI_logging.txt')
         with open(acq_file, 'r') as f:
