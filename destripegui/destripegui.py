@@ -342,6 +342,13 @@ def finish_directory(dir):
             # Handle case where it fails, we don't want it to just exit everything
             print(f"Non-fatal error in time stamping: {e}\nMoving on....")
 
+    # Make a destriped_folder_list.txt so Airflow doesn't over-destripe this
+    output_path = dir["output_path"]
+    file_path = os.path.join(output_path, "destriped_folder_list.txt")
+    with open(file_path, "w") as f:
+        pass
+    print(f"Created empty file at: {file_path}")
+
     for file in Path(dir['path']).iterdir():
         file_name = os.path.split(file)[1]
         if Path(file).suffix in ['.txt', '.ini', '.json']:
