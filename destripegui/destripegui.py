@@ -138,10 +138,10 @@ def get_metadata(dir):
 
     text = dir['path']
     text_list = text.split("\\")
-    dt = datetime.strptime(text_list[3][:17], "%Y%m%d_%H_%M_%S")
+    dt = datetime.strptime(text_list[-1][:17], "%Y%m%d_%H_%M_%S")
     date = dt.strftime("%m/%d/%Y")
     time = dt.strftime("%H:%M:%S")
-    name = text_list[3][18:]
+    name = text_list[-1][18:]
     try:
         obj = metadata['sample metadata']['objective']
         immersion = metadata['sample metadata']['immersion']
@@ -249,10 +249,10 @@ def get_metadata_v5(dir):
 
     text = dir['path']
     text_list = text.split("\\")
-    dt = datetime.strptime(text_list[3][:17], "%Y%m%d_%H_%M_%S")
+    dt = datetime.strptime(text_list[-1][:17], "%Y%m%d_%H_%M_%S")
     date = dt.strftime("%m/%d/%Y")
     time = dt.strftime("%H:%M:%S")
-    name = text_list[3][18:]
+    name = text_list[-1][18:]
 
     obj = metadata['sample metadata']['Obj']
     immersion = ''
