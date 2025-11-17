@@ -1,4 +1,4 @@
-name: cl_destripe_6
+name: gui_destripe_6
 channels:
   - defaults
 dependencies:
