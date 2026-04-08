@@ -15,7 +15,8 @@ icacls C:\ProgramData\Anaconda3\envs\gui_destripe_6 /grant Everyone:(RX) /T
 
 call conda activate gui_destripe_6
 
-call pip3 install torch==2.2.2 torchvision==0.17.2 torchaudio==2.2.2 --index-url https://download.pytorch.org/whl/cu118
+python3 -m pip install --upgrade pip
+call pip3 install --use-feature=truststore torch==2.2.2 torchvision==0.17.2 torchaudio==2.2.2 --index-url https://download.pytorch.org/whl/cu118
 
 call pip install -e .
 
